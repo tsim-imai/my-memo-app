@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 
 let status = document.getElementById('status')
 let historyDiv = document.getElementById('history')
+let ipsDiv = document.getElementById('recent-ips')
 
 async function initApp() {
   try {
@@ -15,6 +16,13 @@ async function initApp() {
       status.textContent = `クリップボード監視中 (最新: ${new Date().toLocaleTimeString()})`
     })
     
+    // IP検出イベントをリッスン
+    await listen('ip-detected', async (event) => {
+      console.log('IP検出:', event.payload)
+      status.textContent = `IP検出: ${event.payload} (${new Date().toLocaleTimeString()})`
+      await loadRecentIPs()
+    })
+    
     // Tauriバックエンドと通信
     await invoke('init_clipboard_manager')
     
@@ -22,6 +30,9 @@ async function initApp() {
     
     // 履歴を取得して表示
     await loadHistory()
+    
+    // IP履歴を取得して表示
+    await loadRecentIPs()
     
   } catch (error) {
     console.error('初期化エラー:', error)
@@ -73,5 +84,54 @@ function displayHistory(history) {
 // ページロード時に初期化
 document.addEventListener('DOMContentLoaded', initApp)
 
+async function loadRecentIPs() {
+  try {
+    const recentIPs = await invoke('get_recent_ips')
+    displayRecentIPs(recentIPs)
+  } catch (error) {
+    console.error('IP履歴取得エラー:', error)
+  }
+}
+
+function displayRecentIPs(ips) {
+  if (!ipsDiv) {
+    console.warn('recent-ips要素が見つかりません')
+    return
+  }
+  
+  ipsDiv.innerHTML = ''
+  
+  if (!ips || ips.length === 0) {
+    ipsDiv.innerHTML = '<h3>最近のIP履歴</h3><p>IP履歴がありません</p>'
+    return
+  }
+  
+  const title = document.createElement('h3')
+  title.textContent = '最近のIP履歴'
+  ipsDiv.appendChild(title)
+  
+  ips.forEach((ipItem, index) => {
+    const div = document.createElement('div')
+    div.style.cssText = `
+      padding: 8px;
+      margin: 3px 0;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      background: #f0f8ff;
+    `
+    
+    div.innerHTML = `
+      <strong>#${index + 1} ${ipItem.ip}</strong> (count: ${ipItem.count})
+      <br>
+      <span style="font-size: 11px; color: #666;">${new Date(ipItem.timestamp).toLocaleString()}</span>
+    `
+    
+    ipsDiv.appendChild(div)
+  })
+}
+
 // 定期的に履歴を更新
-setInterval(loadHistory, 2000)
+setInterval(() => {
+  loadHistory()
+  loadRecentIPs()
+}, 2000)

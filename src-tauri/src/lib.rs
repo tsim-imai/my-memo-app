@@ -7,6 +7,7 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use clipboard::{ClipboardProvider, ClipboardContext};
 use std::fs;
+use regex::Regex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardItem {
@@ -146,6 +147,78 @@ impl ClipboardManager {
         Ok(())
     }
 
+    fn extract_ip_addresses(&self, text: &str) -> Vec<String> {
+        // IPv4アドレスのパターン: xxx.xxx.xxx.xxx
+        let ip_regex = Regex::new(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b").unwrap();
+        
+        let mut ips = Vec::new();
+        for cap in ip_regex.find_iter(text) {
+            let ip = cap.as_str().to_string();
+            
+            // 有効なIPアドレスかチェック（各オクテットが0-255の範囲内）
+            if self.is_valid_ip(&ip) {
+                ips.push(ip);
+            }
+        }
+        
+        ips
+    }
+
+    fn is_valid_ip(&self, ip: &str) -> bool {
+        let parts: Vec<&str> = ip.split('.').collect();
+        if parts.len() != 4 {
+            return false;
+        }
+        
+        for part in parts {
+            if let Ok(_num) = part.parse::<u8>() {
+                // 0-255の範囲内であることを確認（u8なので自動的に範囲内）
+                continue;
+            } else {
+                return false;
+            }
+        }
+        
+        true
+    }
+
+    fn add_ip_to_history(&self, ip: String) -> Result<(), String> {
+        match self.app_data.lock() {
+            Ok(mut data) => {
+                // 既存のIPがあるかチェック
+                if let Some(existing_ip) = data.recent_ips.iter_mut().find(|item| item.ip == ip) {
+                    // 既存の場合はカウントを増やして最新のタイムスタンプに更新
+                    existing_ip.count += 1;
+                    existing_ip.timestamp = Utc::now();
+                    log::info!("IP履歴を更新: {} (count: {})", ip, existing_ip.count);
+                } else {
+                    // 新しいIPの場合は追加
+                    let ip_item = IpHistoryItem {
+                        ip: ip.clone(),
+                        timestamp: Utc::now(),
+                        count: 1,
+                    };
+                    
+                    // 設定で指定された件数制限
+                    let limit = data.settings.ip_limit;
+                    if data.recent_ips.len() >= limit {
+                        // 最も古いものを削除（最初の要素）
+                        data.recent_ips.remove(0);
+                    }
+                    
+                    data.recent_ips.push(ip_item);
+                    log::info!("新しいIPを履歴に追加: {}", ip);
+                }
+                
+                // タイムスタンプでソート（新しい順）
+                data.recent_ips.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                
+                Ok(())
+            }
+            Err(_) => Err("Failed to access IP history".to_string()),
+        }
+    }
+
     pub fn add_item(&self, content: String, content_type: String) -> Result<(), String> {
         let item = ClipboardItem {
             id: Uuid::new_v4().to_string(),
@@ -275,6 +348,32 @@ impl ClipboardManager {
                                         
                                         // フロントエンドに通知
                                         let _ = app_handle.emit("clipboard-updated", &text);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // IP検出処理（クリップボード変更があった場合）
+                        if let Ok(last) = last_content.lock() {
+                            if last.as_ref() != Some(&text) && !text.trim().is_empty() {
+                                // IP検出を実行
+                                if let Ok(_data) = app_data.lock() {
+                                    let manager_clone = ClipboardManager {
+                                        app_data: Arc::clone(&app_data),
+                                        last_clipboard_content: Arc::new(Mutex::new(None)),
+                                        is_monitoring: Arc::new(Mutex::new(false)),
+                                    };
+                                    
+                                    let detected_ips = manager_clone.extract_ip_addresses(&text);
+                                    drop(_data);
+                                    
+                                    for ip in detected_ips {
+                                        if let Err(e) = manager_clone.add_ip_to_history(ip.clone()) {
+                                            log::warn!("IP履歴追加エラー: {}", e);
+                                        } else {
+                                            log::info!("IP検出・追加: {}", ip);
+                                            let _ = app_handle.emit("ip-detected", &ip);
+                                        }
                                     }
                                 }
                             }
@@ -476,6 +575,58 @@ fn load_data_from_file(
     Ok("Data loaded successfully".to_string())
 }
 
+#[tauri::command]
+fn add_ip_to_recent(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+    ip: String,
+) -> Result<String, String> {
+    if !state.is_valid_ip(&ip) {
+        return Err("Invalid IP address format".to_string());
+    }
+    
+    state.add_ip_to_history(ip)?;
+    
+    // データを自動保存
+    if let Err(e) = state.save_to_file(&app_handle) {
+        log::warn!("自動保存エラー: {}", e);
+    }
+    
+    Ok("IP added to recent history".to_string())
+}
+
+#[tauri::command]
+fn remove_ip_from_recent(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+    ip: String,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            data.recent_ips.retain(|item| item.ip != ip);
+            log::info!("IP履歴から削除: {}", ip);
+            
+            // データを自動保存
+            drop(data);
+            if let Err(e) = state.save_to_file(&app_handle) {
+                log::warn!("自動保存エラー: {}", e);
+            }
+            
+            Ok("IP removed from recent history".to_string())
+        }
+        Err(_) => Err("Failed to access recent IPs".to_string()),
+    }
+}
+
+#[tauri::command]
+fn detect_ips_in_text(
+    state: State<'_, ClipboardManager>,
+    text: String,
+) -> Result<Vec<String>, String> {
+    let ips = state.extract_ip_addresses(&text);
+    Ok(ips)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -497,7 +648,10 @@ pub fn run() {
         stop_clipboard_monitoring,
         add_clipboard_item,
         save_data_to_file,
-        load_data_from_file
+        load_data_from_file,
+        add_ip_to_recent,
+        remove_ip_from_recent,
+        detect_ips_in_text
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

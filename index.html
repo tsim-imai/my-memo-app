@@ -12,7 +12,16 @@
         <h1>Clipboard Manager</h1>
         <p>macOS専用クリップボード管理アプリ</p>
         <div id="status">初期化中...</div>
-        <div id="history"></div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div>
+            <h2>クリップボード履歴</h2>
+            <div id="history"></div>
+          </div>
+          <div>
+            <div id="recent-ips"></div>
+          </div>
+        </div>
       </div>
     </div>
     <script type="module" src="/main.js"></script>
@@ -26,7 +35,7 @@
       }
       
       .container {
-        max-width: 600px;
+        max-width: 1000px;
         margin: 0 auto;
         background: white;
         padding: 20px;
@@ -51,11 +60,17 @@
         margin-bottom: 20px;
       }
       
-      #history {
+      #history, #recent-ips {
         border: 1px solid #ddd;
         border-radius: 4px;
         min-height: 200px;
         padding: 10px;
+      }
+      
+      h2 {
+        margin-top: 0;
+        color: #444;
+        font-size: 1.2em;
       }
     </style>
   </body>
