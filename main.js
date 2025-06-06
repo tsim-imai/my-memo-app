@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 let status = document.getElementById('status')
 let historyDiv = document.getElementById('history')
@@ -6,6 +7,13 @@ let historyDiv = document.getElementById('history')
 async function initApp() {
   try {
     status.textContent = 'アプリを初期化しています...'
+    
+    // クリップボード更新イベントをリッスン
+    await listen('clipboard-updated', async (event) => {
+      console.log('クリップボード更新:', event.payload)
+      await loadHistory()
+      status.textContent = `クリップボード監視中 (最新: ${new Date().toLocaleTimeString()})`
+    })
     
     // Tauriバックエンドと通信
     await invoke('init_clipboard_manager')
@@ -49,7 +57,7 @@ function displayHistory(history) {
     `
     
     div.innerHTML = `
-      <strong>#${index + 1}</strong> (${item.type})
+      <strong>#${index + 1}</strong> (${item.content_type})
       <br>
       <span style="font-size: 12px; color: #666;">${new Date(item.timestamp).toLocaleString()}</span>
       <br>

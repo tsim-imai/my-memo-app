@@ -50,9 +50,6 @@
     "dialog": {
       "all": false,
       "save": true
-    },
-    "log": {
-      "level": "info"
     }
   }
 }
