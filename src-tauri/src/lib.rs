@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, State, Emitter};
+use std::path::PathBuf;
+use tauri::{AppHandle, State, Emitter, Manager};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use clipboard::{ClipboardProvider, ClipboardContext};
+use std::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardItem {
@@ -89,6 +91,61 @@ impl ClipboardManager {
         }
     }
 
+    fn get_data_file_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+        let app_data_dir = app_handle.path().app_data_dir()
+            .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+        
+        // ディレクトリが存在しない場合は作成
+        if !app_data_dir.exists() {
+            fs::create_dir_all(&app_data_dir)
+                .map_err(|e| format!("Failed to create app data directory: {}", e))?;
+        }
+        
+        Ok(app_data_dir.join("clipboard_data.json"))
+    }
+
+    pub fn load_from_file(&self, app_handle: &AppHandle) -> Result<(), String> {
+        let file_path = Self::get_data_file_path(app_handle)?;
+        
+        if !file_path.exists() {
+            log::info!("データファイルが存在しないため、デフォルト設定を使用します");
+            return Ok(());
+        }
+
+        let file_content = fs::read_to_string(&file_path)
+            .map_err(|e| format!("Failed to read data file: {}", e))?;
+
+        let loaded_data: AppData = serde_json::from_str(&file_content)
+            .map_err(|e| format!("Failed to parse JSON data: {}", e))?;
+
+        match self.app_data.lock() {
+            Ok(mut data) => {
+                *data = loaded_data;
+                log::info!("データファイルから読み込み完了: {:?}", file_path);
+                Ok(())
+            }
+            Err(_) => Err("Failed to lock app data for loading".to_string()),
+        }
+    }
+
+    pub fn save_to_file(&self, app_handle: &AppHandle) -> Result<(), String> {
+        let file_path = Self::get_data_file_path(app_handle)?;
+
+        let data_to_save = match self.app_data.lock() {
+            Ok(data) => data.clone(),
+            Err(_) => return Err("Failed to lock app data for saving".to_string()),
+        };
+
+        let json_content = serde_json::to_string_pretty(&data_to_save)
+            .map_err(|e| format!("Failed to serialize data: {}", e))?;
+
+        fs::write(&file_path, json_content)
+            .map_err(|e| format!("Failed to write data file: {}", e))?;
+
+        log::info!("データファイルに保存完了: {:?}", file_path);
+        Ok(())
+    }
+
     pub fn add_item(&self, content: String, content_type: String) -> Result<(), String> {
         let item = ClipboardItem {
             id: Uuid::new_v4().to_string(),
@@ -119,6 +176,40 @@ impl ClipboardManager {
             }
             Err(_) => Err("Failed to access clipboard history".to_string()),
         }
+    }
+
+    pub fn start_auto_save(&self, app_handle: AppHandle) {
+        let app_data = Arc::clone(&self.app_data);
+        let app_handle_clone = app_handle.clone();
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30)); // 30秒ごとに自動保存
+            
+            loop {
+                interval.tick().await;
+                
+                if let Ok(data) = app_data.lock() {
+                    let data_clone = data.clone();
+                    drop(data); // Mutexのロックを解放
+                    
+                    let file_path = match Self::get_data_file_path(&app_handle_clone) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            log::warn!("自動保存: ファイルパス取得エラー: {}", e);
+                            continue;
+                        }
+                    };
+                    
+                    if let Ok(json_content) = serde_json::to_string_pretty(&data_clone) {
+                        if let Err(e) = fs::write(&file_path, json_content) {
+                            log::warn!("自動保存エラー: {}", e);
+                        } else {
+                            log::debug!("自動保存完了: {:?}", file_path);
+                        }
+                    }
+                }
+            }
+        });
     }
 
     pub fn start_monitoring(&self, app_handle: AppHandle) -> Result<(), String> {
@@ -180,6 +271,8 @@ impl ClipboardManager {
                                         data.history.push(item);
                                         log::info!("クリップボード変更検出: {} chars", text.len());
                                         
+                                        // データ変更時の通知のみ（自動保存は別タスクで実行）
+                                        
                                         // フロントエンドに通知
                                         let _ = app_handle.emit("clipboard-updated", &text);
                                     }
@@ -212,6 +305,14 @@ async fn init_clipboard_manager(
     app_handle: AppHandle,
 ) -> Result<String, String> {
     log::info!("Clipboard manager initializing...");
+    
+    // データファイルから読み込み
+    if let Err(e) = state.load_from_file(&app_handle) {
+        log::warn!("データファイル読み込みエラー: {}", e);
+    }
+    
+    // 自動保存を開始
+    state.start_auto_save(app_handle.clone());
     
     // クリップボード監視を開始
     state.start_monitoring(app_handle)?;
@@ -247,6 +348,7 @@ fn get_bookmarks(state: State<'_, ClipboardManager>) -> Result<Vec<BookmarkItem>
 #[tauri::command]
 fn add_bookmark(
     state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
     name: String,
     content: String,
     content_type: String,
@@ -265,6 +367,13 @@ fn add_bookmark(
         Ok(mut data) => {
             data.bookmarks.push(bookmark);
             log::info!("ブックマークを追加しました");
+            
+            // データを自動保存
+            drop(data); // Mutexのロックを解放
+            if let Err(e) = state.save_to_file(&app_handle) {
+                log::warn!("自動保存エラー: {}", e);
+            }
+            
             Ok("Bookmark added successfully".to_string())
         }
         Err(_) => Err("Failed to add bookmark".to_string()),
@@ -274,12 +383,20 @@ fn add_bookmark(
 #[tauri::command]
 fn delete_bookmark(
     state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
     bookmark_id: String,
 ) -> Result<String, String> {
     match state.app_data.lock() {
         Ok(mut data) => {
             data.bookmarks.retain(|b| b.id != bookmark_id);
             log::info!("ブックマークを削除しました: {}", bookmark_id);
+            
+            // データを自動保存
+            drop(data); // Mutexのロックを解放
+            if let Err(e) = state.save_to_file(&app_handle) {
+                log::warn!("自動保存エラー: {}", e);
+            }
+            
             Ok("Bookmark deleted successfully".to_string())
         }
         Err(_) => Err("Failed to delete bookmark".to_string()),
@@ -305,12 +422,20 @@ fn get_settings(state: State<'_, ClipboardManager>) -> Result<AppSettings, Strin
 #[tauri::command]
 fn update_settings(
     state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
     settings: AppSettings,
 ) -> Result<String, String> {
     match state.app_data.lock() {
         Ok(mut data) => {
             data.settings = settings;
             log::info!("設定を更新しました");
+            
+            // データを自動保存
+            drop(data); // Mutexのロックを解放
+            if let Err(e) = state.save_to_file(&app_handle) {
+                log::warn!("自動保存エラー: {}", e);
+            }
+            
             Ok("Settings updated successfully".to_string())
         }
         Err(_) => Err("Failed to update settings".to_string()),
@@ -333,6 +458,24 @@ fn add_clipboard_item(
     Ok("Item added to clipboard history".to_string())
 }
 
+#[tauri::command]
+fn save_data_to_file(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    state.save_to_file(&app_handle)?;
+    Ok("Data saved successfully".to_string())
+}
+
+#[tauri::command]
+fn load_data_from_file(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    state.load_from_file(&app_handle)?;
+    Ok("Data loaded successfully".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -352,7 +495,9 @@ pub fn run() {
         get_settings,
         update_settings,
         stop_clipboard_monitoring,
-        add_clipboard_item
+        add_clipboard_item,
+        save_data_to_file,
+        load_data_from_file
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
