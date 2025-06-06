@@ -1619,8 +1619,6 @@ pub fn run() {
       Ok(())
     })
     .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-    .plugin(tauri_plugin_fs::init())
-    .plugin(tauri_plugin_dialog::init())
     .invoke_handler(tauri::generate_handler![
         init_clipboard_manager,
         get_clipboard_history,

@@ -50,14 +50,6 @@
     }
   },
   "plugins": {
-    "fs": {
-      "all": true,
-      "scope": ["$APPDATA", "$APPDATA/*"]
-    },
-    "dialog": {
-      "all": false,
-      "save": true
-    },
     "globalShortcut": {
       "all": true
     }
