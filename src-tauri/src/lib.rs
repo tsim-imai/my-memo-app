@@ -627,6 +627,579 @@ fn detect_ips_in_text(
     Ok(ips)
 }
 
+#[tauri::command]
+fn delete_clipboard_item(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+    item_id: String,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            let original_len = data.history.len();
+            data.history.retain(|item| item.id != item_id);
+            
+            if data.history.len() < original_len {
+                log::info!("クリップボード履歴アイテム削除: {}", item_id);
+                
+                // データを自動保存
+                drop(data);
+                if let Err(e) = state.save_to_file(&app_handle) {
+                    log::warn!("自動保存エラー: {}", e);
+                }
+                
+                Ok("Clipboard item deleted successfully".to_string())
+            } else {
+                Err("Clipboard item not found".to_string())
+            }
+        }
+        Err(_) => Err("Failed to access clipboard history".to_string()),
+    }
+}
+
+#[tauri::command]
+fn clear_clipboard_history(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            let count = data.history.len();
+            data.history.clear();
+            log::info!("クリップボード履歴をクリア: {} items", count);
+            
+            // データを自動保存
+            drop(data);
+            if let Err(e) = state.save_to_file(&app_handle) {
+                log::warn!("自動保存エラー: {}", e);
+            }
+            
+            Ok(format!("Cleared {} clipboard items", count))
+        }
+        Err(_) => Err("Failed to access clipboard history".to_string()),
+    }
+}
+
+#[tauri::command]
+fn search_clipboard_history(
+    state: State<'_, ClipboardManager>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<ClipboardItem>, String> {
+    match state.app_data.lock() {
+        Ok(data) => {
+            let query_lower = query.to_lowercase();
+            let mut results: Vec<ClipboardItem> = data.history
+                .iter()
+                .filter(|item| {
+                    item.content.to_lowercase().contains(&query_lower) ||
+                    item.content_type.to_lowercase().contains(&query_lower)
+                })
+                .cloned()
+                .collect();
+            
+            // 新しい順にソート
+            results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+            
+            // 制限がある場合は適用
+            if let Some(max_results) = limit {
+                results.truncate(max_results);
+            }
+            
+            log::info!("クリップボード検索: '{}' -> {} 件", query, results.len());
+            Ok(results)
+        }
+        Err(_) => Err("Failed to access clipboard history".to_string()),
+    }
+}
+
+#[tauri::command]
+fn get_clipboard_stats(
+    state: State<'_, ClipboardManager>,
+) -> Result<serde_json::Value, String> {
+    match state.app_data.lock() {
+        Ok(data) => {
+            let total_items = data.history.len();
+            let total_size: usize = data.history.iter().map(|item| item.size).sum();
+            let oldest_timestamp = data.history.first().map(|item| &item.timestamp);
+            let newest_timestamp = data.history.last().map(|item| &item.timestamp);
+            
+            let stats = serde_json::json!({
+                "total_items": total_items,
+                "total_size_bytes": total_size,
+                "average_size_bytes": if total_items > 0 { total_size / total_items } else { 0 },
+                "oldest_timestamp": oldest_timestamp,
+                "newest_timestamp": newest_timestamp,
+                "max_capacity": data.settings.history_limit,
+                "usage_percent": if data.settings.history_limit > 0 { 
+                    (total_items as f64 / data.settings.history_limit as f64 * 100.0) as u32
+                } else { 0 }
+            });
+            
+            Ok(stats)
+        }
+        Err(_) => Err("Failed to access clipboard history".to_string()),
+    }
+}
+
+#[tauri::command]
+fn update_bookmark(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+    bookmark_id: String,
+    name: String,
+    content: String,
+    content_type: String,
+    tags: Vec<String>,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            if let Some(bookmark) = data.bookmarks.iter_mut().find(|b| b.id == bookmark_id) {
+                bookmark.name = name;
+                bookmark.content = content;
+                bookmark.content_type = content_type;
+                bookmark.tags = tags;
+                bookmark.timestamp = Utc::now(); // 更新タイムスタンプ
+                
+                log::info!("ブックマークを更新: {}", bookmark_id);
+                
+                // データを自動保存
+                drop(data);
+                if let Err(e) = state.save_to_file(&app_handle) {
+                    log::warn!("自動保存エラー: {}", e);
+                }
+                
+                Ok("Bookmark updated successfully".to_string())
+            } else {
+                Err("Bookmark not found".to_string())
+            }
+        }
+        Err(_) => Err("Failed to access bookmarks".to_string()),
+    }
+}
+
+#[tauri::command]
+fn search_bookmarks(
+    state: State<'_, ClipboardManager>,
+    query: String,
+    tags: Option<Vec<String>>,
+    limit: Option<usize>,
+) -> Result<Vec<BookmarkItem>, String> {
+    match state.app_data.lock() {
+        Ok(data) => {
+            let query_lower = query.to_lowercase();
+            let mut results: Vec<BookmarkItem> = data.bookmarks
+                .iter()
+                .filter(|bookmark| {
+                    // テキスト検索
+                    let text_match = query.is_empty() || 
+                        bookmark.name.to_lowercase().contains(&query_lower) ||
+                        bookmark.content.to_lowercase().contains(&query_lower);
+                    
+                    // タグ検索
+                    let tag_match = if let Some(ref search_tags) = tags {
+                        if search_tags.is_empty() {
+                            true
+                        } else {
+                            search_tags.iter().any(|tag| {
+                                bookmark.tags.iter().any(|bookmark_tag| {
+                                    bookmark_tag.to_lowercase().contains(&tag.to_lowercase())
+                                })
+                            })
+                        }
+                    } else {
+                        true
+                    };
+                    
+                    text_match && tag_match
+                })
+                .cloned()
+                .collect();
+            
+            // 新しい順にソート
+            results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+            
+            // 制限がある場合は適用
+            if let Some(max_results) = limit {
+                results.truncate(max_results);
+            }
+            
+            log::info!("ブックマーク検索: '{}' -> {} 件", query, results.len());
+            Ok(results)
+        }
+        Err(_) => Err("Failed to access bookmarks".to_string()),
+    }
+}
+
+#[tauri::command]
+fn get_bookmark_tags(
+    state: State<'_, ClipboardManager>,
+) -> Result<Vec<String>, String> {
+    match state.app_data.lock() {
+        Ok(data) => {
+            let mut all_tags = std::collections::HashSet::new();
+            
+            for bookmark in &data.bookmarks {
+                for tag in &bookmark.tags {
+                    all_tags.insert(tag.clone());
+                }
+            }
+            
+            let mut tags: Vec<String> = all_tags.into_iter().collect();
+            tags.sort();
+            
+            Ok(tags)
+        }
+        Err(_) => Err("Failed to access bookmarks".to_string()),
+    }
+}
+
+#[tauri::command]
+fn duplicate_bookmark(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+    bookmark_id: String,
+    new_name: Option<String>,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            if let Some(original) = data.bookmarks.iter().find(|b| b.id == bookmark_id) {
+                let new_bookmark = BookmarkItem {
+                    id: Uuid::new_v4().to_string(),
+                    name: new_name.unwrap_or_else(|| format!("{} (コピー)", original.name)),
+                    content: original.content.clone(),
+                    content_type: original.content_type.clone(),
+                    timestamp: Utc::now(),
+                    tags: original.tags.clone(),
+                };
+                
+                data.bookmarks.push(new_bookmark);
+                log::info!("ブックマークを複製: {}", bookmark_id);
+                
+                // データを自動保存
+                drop(data);
+                if let Err(e) = state.save_to_file(&app_handle) {
+                    log::warn!("自動保存エラー: {}", e);
+                }
+                
+                Ok("Bookmark duplicated successfully".to_string())
+            } else {
+                Err("Bookmark not found".to_string())
+            }
+        }
+        Err(_) => Err("Failed to access bookmarks".to_string()),
+    }
+}
+
+#[tauri::command]
+fn clear_bookmarks(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            let count = data.bookmarks.len();
+            data.bookmarks.clear();
+            log::info!("全ブックマークをクリア: {} items", count);
+            
+            // データを自動保存
+            drop(data);
+            if let Err(e) = state.save_to_file(&app_handle) {
+                log::warn!("自動保存エラー: {}", e);
+            }
+            
+            Ok(format!("Cleared {} bookmarks", count))
+        }
+        Err(_) => Err("Failed to access bookmarks".to_string()),
+    }
+}
+
+#[tauri::command]
+fn clear_ip_history(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            let count = data.recent_ips.len();
+            data.recent_ips.clear();
+            log::info!("IP履歴をクリア: {} items", count);
+            
+            // データを自動保存
+            drop(data);
+            if let Err(e) = state.save_to_file(&app_handle) {
+                log::warn!("自動保存エラー: {}", e);
+            }
+            
+            Ok(format!("Cleared {} IP history items", count))
+        }
+        Err(_) => Err("Failed to access IP history".to_string()),
+    }
+}
+
+#[tauri::command]
+fn search_ip_history(
+    state: State<'_, ClipboardManager>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<IpHistoryItem>, String> {
+    match state.app_data.lock() {
+        Ok(data) => {
+            let mut results: Vec<IpHistoryItem> = data.recent_ips
+                .iter()
+                .filter(|ip_item| {
+                    query.is_empty() || ip_item.ip.contains(&query)
+                })
+                .cloned()
+                .collect();
+            
+            // カウントが多い順、次に新しい順でソート
+            results.sort_by(|a, b| {
+                match b.count.cmp(&a.count) {
+                    std::cmp::Ordering::Equal => b.timestamp.cmp(&a.timestamp),
+                    other => other,
+                }
+            });
+            
+            // 制限がある場合は適用
+            if let Some(max_results) = limit {
+                results.truncate(max_results);
+            }
+            
+            log::info!("IP履歴検索: '{}' -> {} 件", query, results.len());
+            Ok(results)
+        }
+        Err(_) => Err("Failed to access IP history".to_string()),
+    }
+}
+
+#[tauri::command]
+fn get_ip_stats(
+    state: State<'_, ClipboardManager>,
+) -> Result<serde_json::Value, String> {
+    match state.app_data.lock() {
+        Ok(data) => {
+            let total_ips = data.recent_ips.len();
+            let total_accesses: u32 = data.recent_ips.iter().map(|item| item.count).sum();
+            let most_used_ip = data.recent_ips.iter()
+                .max_by_key(|item| item.count)
+                .map(|item| &item.ip);
+            let oldest_timestamp = data.recent_ips.iter()
+                .min_by_key(|item| &item.timestamp)
+                .map(|item| &item.timestamp);
+            let newest_timestamp = data.recent_ips.iter()
+                .max_by_key(|item| &item.timestamp)
+                .map(|item| &item.timestamp);
+            
+            let stats = serde_json::json!({
+                "total_ips": total_ips,
+                "total_accesses": total_accesses,
+                "average_accesses": if total_ips > 0 { total_accesses / total_ips as u32 } else { 0 },
+                "most_used_ip": most_used_ip,
+                "oldest_timestamp": oldest_timestamp,
+                "newest_timestamp": newest_timestamp,
+                "max_capacity": data.settings.ip_limit,
+                "usage_percent": if data.settings.ip_limit > 0 { 
+                    (total_ips as f64 / data.settings.ip_limit as f64 * 100.0) as u32
+                } else { 0 }
+            });
+            
+            Ok(stats)
+        }
+        Err(_) => Err("Failed to access IP history".to_string()),
+    }
+}
+
+#[tauri::command]
+fn reset_ip_count(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+    ip: String,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            if let Some(ip_item) = data.recent_ips.iter_mut().find(|item| item.ip == ip) {
+                ip_item.count = 1;
+                ip_item.timestamp = Utc::now();
+                log::info!("IPカウントをリセット: {}", ip);
+                
+                // データを自動保存
+                drop(data);
+                if let Err(e) = state.save_to_file(&app_handle) {
+                    log::warn!("自動保存エラー: {}", e);
+                }
+                
+                Ok("IP count reset successfully".to_string())
+            } else {
+                Err("IP not found in history".to_string())
+            }
+        }
+        Err(_) => Err("Failed to access IP history".to_string()),
+    }
+}
+
+#[tauri::command]
+fn remove_duplicate_clipboard_items(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            let original_count = data.history.len();
+            let mut seen_content = std::collections::HashSet::new();
+            let mut unique_items = Vec::new();
+            
+            // 新しい順に処理して、重複する場合は最新のものを保持
+            for item in data.history.iter().rev() {
+                if !seen_content.contains(&item.content) {
+                    seen_content.insert(item.content.clone());
+                    unique_items.push(item.clone());
+                }
+            }
+            
+            // 元の順序に戻す（古い順）
+            unique_items.reverse();
+            data.history = unique_items;
+            
+            let removed_count = original_count - data.history.len();
+            log::info!("重複アイテム削除: {} 件削除（残り {} 件）", removed_count, data.history.len());
+            
+            // データを自動保存
+            drop(data);
+            if let Err(e) = state.save_to_file(&app_handle) {
+                log::warn!("自動保存エラー: {}", e);
+            }
+            
+            Ok(format!("Removed {} duplicate items, {} items remaining", removed_count, original_count - removed_count))
+        }
+        Err(_) => Err("Failed to access clipboard history".to_string()),
+    }
+}
+
+#[tauri::command]
+fn remove_duplicate_bookmarks(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            let original_count = data.bookmarks.len();
+            let mut seen_content = std::collections::HashSet::new();
+            let mut unique_bookmarks = Vec::new();
+            
+            // 新しい順に処理して、重複する場合は最新のものを保持
+            for bookmark in data.bookmarks.iter().rev() {
+                let content_key = format!("{}:{}", bookmark.name, bookmark.content);
+                if !seen_content.contains(&content_key) {
+                    seen_content.insert(content_key);
+                    unique_bookmarks.push(bookmark.clone());
+                }
+            }
+            
+            // 元の順序に戻す
+            unique_bookmarks.reverse();
+            data.bookmarks = unique_bookmarks;
+            
+            let removed_count = original_count - data.bookmarks.len();
+            log::info!("重複ブックマーク削除: {} 件削除（残り {} 件）", removed_count, data.bookmarks.len());
+            
+            // データを自動保存
+            drop(data);
+            if let Err(e) = state.save_to_file(&app_handle) {
+                log::warn!("自動保存エラー: {}", e);
+            }
+            
+            Ok(format!("Removed {} duplicate bookmarks, {} bookmarks remaining", removed_count, original_count - removed_count))
+        }
+        Err(_) => Err("Failed to access bookmarks".to_string()),
+    }
+}
+
+#[tauri::command]
+fn find_duplicate_clipboard_items(
+    state: State<'_, ClipboardManager>,
+) -> Result<Vec<Vec<ClipboardItem>>, String> {
+    match state.app_data.lock() {
+        Ok(data) => {
+            let mut content_groups: std::collections::HashMap<String, Vec<ClipboardItem>> = std::collections::HashMap::new();
+            
+            // 内容ごとにグループ化
+            for item in &data.history {
+                content_groups.entry(item.content.clone())
+                    .or_insert_with(Vec::new)
+                    .push(item.clone());
+            }
+            
+            // 2つ以上のアイテムがあるグループのみを重複として返す
+            let duplicates: Vec<Vec<ClipboardItem>> = content_groups
+                .into_values()
+                .filter(|group| group.len() > 1)
+                .collect();
+            
+            log::info!("重複クリップボードアイテム検出: {} グループ", duplicates.len());
+            Ok(duplicates)
+        }
+        Err(_) => Err("Failed to access clipboard history".to_string()),
+    }
+}
+
+#[tauri::command]
+fn find_duplicate_bookmarks(
+    state: State<'_, ClipboardManager>,
+) -> Result<Vec<Vec<BookmarkItem>>, String> {
+    match state.app_data.lock() {
+        Ok(data) => {
+            let mut content_groups: std::collections::HashMap<String, Vec<BookmarkItem>> = std::collections::HashMap::new();
+            
+            // 名前と内容の組み合わせでグループ化
+            for bookmark in &data.bookmarks {
+                let key = format!("{}:{}", bookmark.name, bookmark.content);
+                content_groups.entry(key)
+                    .or_insert_with(Vec::new)
+                    .push(bookmark.clone());
+            }
+            
+            // 2つ以上のブックマークがあるグループのみを重複として返す
+            let duplicates: Vec<Vec<BookmarkItem>> = content_groups
+                .into_values()
+                .filter(|group| group.len() > 1)
+                .collect();
+            
+            log::info!("重複ブックマーク検出: {} グループ", duplicates.len());
+            Ok(duplicates)
+        }
+        Err(_) => Err("Failed to access bookmarks".to_string()),
+    }
+}
+
+#[tauri::command]
+fn cleanup_old_items(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+    days_old: u32,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            let cutoff_date = Utc::now() - chrono::Duration::days(days_old as i64);
+            let original_count = data.history.len();
+            
+            // 指定された日数より古いアイテムを削除
+            data.history.retain(|item| item.timestamp > cutoff_date);
+            
+            let removed_count = original_count - data.history.len();
+            log::info!("古いアイテム削除: {} 日以前の {} 件削除", days_old, removed_count);
+            
+            // データを自動保存
+            drop(data);
+            if let Err(e) = state.save_to_file(&app_handle) {
+                log::warn!("自動保存エラー: {}", e);
+            }
+            
+            Ok(format!("Removed {} items older than {} days", removed_count, days_old))
+        }
+        Err(_) => Err("Failed to access clipboard history".to_string()),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -651,7 +1224,25 @@ pub fn run() {
         load_data_from_file,
         add_ip_to_recent,
         remove_ip_from_recent,
-        detect_ips_in_text
+        detect_ips_in_text,
+        delete_clipboard_item,
+        clear_clipboard_history,
+        search_clipboard_history,
+        get_clipboard_stats,
+        update_bookmark,
+        search_bookmarks,
+        get_bookmark_tags,
+        duplicate_bookmark,
+        clear_bookmarks,
+        clear_ip_history,
+        search_ip_history,
+        get_ip_stats,
+        reset_ip_count,
+        remove_duplicate_clipboard_items,
+        remove_duplicate_bookmarks,
+        find_duplicate_clipboard_items,
+        find_duplicate_bookmarks,
+        cleanup_old_items
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
