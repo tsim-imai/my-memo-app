@@ -22,6 +22,13 @@
     ],
     "security": {
       "csp": null
+    },
+    "trayIcon": {
+      "id": "main",
+      "iconPath": "icons/32x32.png",
+      "iconAsTemplate": true,
+      "menuOnLeftClick": false,
+      "tooltip": "Clipboard Manager"
     }
   },
   "bundle": {
@@ -50,6 +57,9 @@
     "dialog": {
       "all": false,
       "save": true
+    },
+    "globalShortcut": {
+      "all": true
     }
   }
 }

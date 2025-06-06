@@ -81,6 +81,7 @@ pub struct ClipboardManager {
     app_data: Arc<Mutex<AppData>>,
     last_clipboard_content: Arc<Mutex<Option<String>>>,
     is_monitoring: Arc<Mutex<bool>>,
+    hotkey_registered: Arc<Mutex<bool>>,
 }
 
 impl ClipboardManager {
@@ -89,6 +90,7 @@ impl ClipboardManager {
             app_data: Arc::new(Mutex::new(AppData::default())),
             last_clipboard_content: Arc::new(Mutex::new(None)),
             is_monitoring: Arc::new(Mutex::new(false)),
+            hotkey_registered: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -362,6 +364,7 @@ impl ClipboardManager {
                                         app_data: Arc::clone(&app_data),
                                         last_clipboard_content: Arc::new(Mutex::new(None)),
                                         is_monitoring: Arc::new(Mutex::new(false)),
+                                        hotkey_registered: Arc::new(Mutex::new(false)),
                                     };
                                     
                                     let detected_ips = manager_clone.extract_ip_addresses(&text);
@@ -414,7 +417,13 @@ async fn init_clipboard_manager(
     state.start_auto_save(app_handle.clone());
     
     // クリップボード監視を開始
-    state.start_monitoring(app_handle)?;
+    state.start_monitoring(app_handle.clone())?;
+    
+    // グローバルホットキーを自動登録
+    match register_global_hotkey(app_handle.clone(), state.clone()).await {
+        Ok(msg) => log::info!("グローバルホットキー自動登録: {}", msg),
+        Err(e) => log::warn!("グローバルホットキー自動登録失敗: {}", e),
+    }
     
     log::info!("Clipboard manager initialized and monitoring started");
     Ok("Clipboard manager started".to_string())
@@ -1200,14 +1209,418 @@ fn cleanup_old_items(
     }
 }
 
+#[tauri::command]
+async fn register_global_hotkey(
+    app_handle: AppHandle,
+    state: State<'_, ClipboardManager>,
+) -> Result<String, String> {
+    use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, GlobalShortcutExt};
+    
+    // 設定からホットキーを取得
+    let hotkey_string = match state.app_data.lock() {
+        Ok(data) => data.settings.hotkey.clone(),
+        Err(_) => return Err("Failed to access settings".to_string()),
+    };
+    
+    // ホットキー登録状態をチェック
+    if let Ok(registered) = state.hotkey_registered.lock() {
+        if *registered {
+            return Ok("Global hotkey already registered".to_string());
+        }
+    }
+    
+    // Cmd+Shift+Vのショートカットを作成
+    let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyV);
+    
+    match app_handle.global_shortcut().register(shortcut) {
+        Ok(_) => {
+            // 登録成功
+            if let Ok(mut registered) = state.hotkey_registered.lock() {
+                *registered = true;
+            }
+            log::info!("グローバルホットキー登録成功: {}", hotkey_string);
+            Ok("Global hotkey registered successfully".to_string())
+        }
+        Err(e) => {
+            log::error!("グローバルホットキー登録失敗: {}", e);
+            Err(format!("Failed to register global hotkey: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn unregister_global_hotkey(
+    app_handle: AppHandle,
+    state: State<'_, ClipboardManager>,
+) -> Result<String, String> {
+    use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, GlobalShortcutExt};
+    
+    // ホットキー登録状態をチェック
+    if let Ok(registered) = state.hotkey_registered.lock() {
+        if !*registered {
+            return Ok("Global hotkey not registered".to_string());
+        }
+    }
+    
+    // Cmd+Shift+Vのショートカットを作成
+    let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyV);
+    
+    match app_handle.global_shortcut().unregister(shortcut) {
+        Ok(_) => {
+            // 登録解除成功
+            if let Ok(mut registered) = state.hotkey_registered.lock() {
+                *registered = false;
+            }
+            log::info!("グローバルホットキー登録解除成功");
+            Ok("Global hotkey unregistered successfully".to_string())
+        }
+        Err(e) => {
+            log::error!("グローバルホットキー登録解除失敗: {}", e);
+            Err(format!("Failed to unregister global hotkey: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+fn is_global_hotkey_registered(
+    state: State<'_, ClipboardManager>,
+) -> Result<bool, String> {
+    match state.hotkey_registered.lock() {
+        Ok(registered) => Ok(*registered),
+        Err(_) => Err("Failed to check hotkey registration status".to_string()),
+    }
+}
+
+#[tauri::command]
+async fn show_main_window(app_handle: AppHandle) -> Result<String, String> {
+    if let Some(main_window) = app_handle.get_webview_window("main") {
+        match main_window.show() {
+            Ok(_) => {
+                let _ = main_window.set_focus();
+                let _ = main_window.unminimize();
+                log::info!("メインウィンドウを表示しました");
+                Ok("Main window shown successfully".to_string())
+            }
+            Err(e) => {
+                log::error!("メインウィンドウ表示失敗: {}", e);
+                Err(format!("Failed to show main window: {}", e))
+            }
+        }
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+#[tauri::command]
+async fn hide_main_window(app_handle: AppHandle) -> Result<String, String> {
+    if let Some(main_window) = app_handle.get_webview_window("main") {
+        match main_window.hide() {
+            Ok(_) => {
+                log::info!("メインウィンドウを非表示にしました");
+                Ok("Main window hidden successfully".to_string())
+            }
+            Err(e) => {
+                log::error!("メインウィンドウ非表示失敗: {}", e);
+                Err(format!("Failed to hide main window: {}", e))
+            }
+        }
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn set_dock_icon_visibility(app_handle: AppHandle, visible: bool) -> Result<String, String> {
+    
+    match visible {
+        true => {
+            // Dockアイコンを表示
+            if let Err(e) = app_handle.set_activation_policy(tauri::ActivationPolicy::Regular) {
+                log::error!("Dockアイコン表示失敗: {}", e);
+                return Err(format!("Failed to show dock icon: {}", e));
+            }
+            log::info!("Dockアイコンを表示しました");
+            Ok("Dock icon shown successfully".to_string())
+        }
+        false => {
+            // Dockアイコンを非表示
+            if let Err(e) = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory) {
+                log::error!("Dockアイコン非表示失敗: {}", e);
+                return Err(format!("Failed to hide dock icon: {}", e));
+            }
+            log::info!("Dockアイコンを非表示にしました");
+            Ok("Dock icon hidden successfully".to_string())
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn set_dock_icon_visibility(_app_handle: AppHandle, _visible: bool) -> Result<String, String> {
+    Err("Dock icon control is only available on macOS".to_string())
+}
+
+#[tauri::command]
+async fn minimize_to_tray(app_handle: AppHandle) -> Result<String, String> {
+    if let Some(main_window) = app_handle.get_webview_window("main") {
+        match main_window.hide() {
+            Ok(_) => {
+                // macOSの場合はDockアイコンも非表示にする
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = set_dock_icon_visibility(app_handle, false).await;
+                }
+                
+                log::info!("アプリをトレイに最小化しました");
+                Ok("App minimized to tray successfully".to_string())
+            }
+            Err(e) => {
+                log::error!("トレイ最小化失敗: {}", e);
+                Err(format!("Failed to minimize to tray: {}", e))
+            }
+        }
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+#[tauri::command]
+async fn restore_from_tray(app_handle: AppHandle) -> Result<String, String> {
+    // macOSの場合はDockアイコンを表示
+    #[cfg(target_os = "macos")]
+    {
+        let _ = set_dock_icon_visibility(app_handle.clone(), true).await;
+    }
+    
+    if let Some(main_window) = app_handle.get_webview_window("main") {
+        match main_window.show() {
+            Ok(_) => {
+                let _ = main_window.set_focus();
+                let _ = main_window.unminimize();
+                log::info!("トレイからアプリを復元しました");
+                Ok("App restored from tray successfully".to_string())
+            }
+            Err(e) => {
+                log::error!("トレイ復元失敗: {}", e);
+                Err(format!("Failed to restore from tray: {}", e))
+            }
+        }
+    } else {
+        Err("Main window not found".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn check_accessibility_permission() -> Result<bool, String> {
+    use std::process::Command;
+    
+    // macOSでアクセシビリティ権限をチェック
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg("tell application \"System Events\" to get every process")
+        .output();
+    
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                log::info!("アクセシビリティ権限: 許可済み");
+                Ok(true)
+            } else {
+                log::warn!("アクセシビリティ権限: 拒否または未設定");
+                Ok(false)
+            }
+        }
+        Err(e) => {
+            log::error!("アクセシビリティ権限チェック失敗: {}", e);
+            Err(format!("Failed to check accessibility permission: {}", e))
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn check_accessibility_permission() -> Result<bool, String> {
+    Ok(true) // non-macOSでは常にtrue
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn request_accessibility_permission() -> Result<String, String> {
+    use std::process::Command;
+    
+    // System Preferencesのアクセシビリティ設定を開く
+    let output = Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        .output();
+    
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                log::info!("システム環境設定のアクセシビリティ画面を開きました");
+                Ok("System preferences opened for accessibility settings".to_string())
+            } else {
+                log::error!("システム環境設定を開けませんでした");
+                Err("Failed to open system preferences".to_string())
+            }
+        }
+        Err(e) => {
+            log::error!("システム環境設定を開く際にエラー: {}", e);
+            Err(format!("Failed to open system preferences: {}", e))
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn request_accessibility_permission() -> Result<String, String> {
+    Err("Accessibility permission request is only available on macOS".to_string())
+}
+
+#[tauri::command]
+async fn check_permissions_status() -> Result<serde_json::Value, String> {
+    let accessibility_permission = check_accessibility_permission().await.unwrap_or(false);
+    
+    let status = serde_json::json!({
+        "accessibility": accessibility_permission,
+        "clipboard": true, // クリップボードアクセスは通常は問題なし
+        "global_shortcuts": true, // ホットキーの動作確認は別途必要
+        "all_granted": accessibility_permission
+    });
+    
+    log::info!("権限ステータス: {:?}", status);
+    Ok(status)
+}
+
+#[tauri::command]
+async fn get_permission_instructions() -> Result<serde_json::Value, String> {
+    let instructions = serde_json::json!({
+        "title": "アクセシビリティ権限の設定",
+        "steps": [
+            "1. システム環境設定を開きます",
+            "2. 「セキュリティとプライバシー」をクリックします",
+            "3. 左側の「プライバシー」タブを選択します",
+            "4. 左のリストから「アクセシビリティ」を選択します",
+            "5. 右下の鍵マークをクリックしてパスワードを入力します",
+            "6. 「Clipboard Manager」アプリにチェックを入れます",
+            "7. 設定を保存してアプリを再起動します"
+        ],
+        "note": "この権限はグローバルホットキーとクリップボード監視に必要です"
+    });
+    
+    Ok(instructions)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .manage(ClipboardManager::new())
-    .setup(|_app| {
+    .setup(|app| {
       log::info!("App setup completed");
+      
+      // グローバルホットキーイベントリスナーを設定
+      use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, GlobalShortcutExt};
+      
+      let app_handle = app.handle().clone();
+      let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyV);
+      
+      let _ = app.global_shortcut().on_shortcut(shortcut, move |_app_handle, _shortcut, _event| {
+        log::info!("グローバルホットキーが押されました: Cmd+Shift+V");
+        
+        // メインウィンドウを表示・フォーカス
+        if let Some(main_window) = app_handle.get_webview_window("main") {
+          let _ = main_window.show();
+          let _ = main_window.set_focus();
+          let _ = main_window.unminimize();
+          
+          // フロントエンドにホットキーイベントを通知
+          let _ = app_handle.emit("hotkey-triggered", "cmd+shift+v");
+        }
+      });
+      
+      // システムトレイメニューを設定
+      use tauri::{
+        menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
+        tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+      };
+      
+      let show_item = MenuItem::with_id(app, "show", "ウィンドウを表示", true, None::<&str>)?;
+      let hide_item = MenuItem::with_id(app, "hide", "ウィンドウを非表示", true, None::<&str>)?;
+      let separator = PredefinedMenuItem::separator(app)?;
+      let clipboard_submenu = Submenu::with_id_and_items(app, "clipboard", "クリップボード", true, &[
+        &MenuItem::with_id(app, "clear_history", "履歴をクリア", true, None::<&str>)?,
+        &MenuItem::with_id(app, "remove_duplicates", "重複を削除", true, None::<&str>)?,
+      ])?;
+      let quit_item = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
+      
+      let menu = Menu::with_items(app, &[
+        &show_item,
+        &hide_item,
+        &separator,
+        &clipboard_submenu,
+        &separator,
+        &quit_item,
+      ])?;
+      
+      let app_handle_for_tray = app.handle().clone();
+      let _tray = TrayIconBuilder::with_id("main")
+        .icon(app.default_window_icon().unwrap().clone())
+        .menu(&menu)
+        .tooltip("Clipboard Manager")
+        .on_menu_event(move |_app, event| match event.id.as_ref() {
+          "show" => {
+            log::info!("トレイメニュー: ウィンドウを表示");
+            // Tauriコマンドを呼び出し
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+              let app_handle_clone = app_handle_for_tray.clone();
+              runtime.spawn(async move {
+                let _ = restore_from_tray(app_handle_clone).await;
+              });
+            }
+          }
+          "hide" => {
+            log::info!("トレイメニュー: ウィンドウを非表示");
+            // Tauriコマンドを呼び出し
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+              let app_handle_clone = app_handle_for_tray.clone();
+              runtime.spawn(async move {
+                let _ = minimize_to_tray(app_handle_clone).await;
+              });
+            }
+          }
+          "clear_history" => {
+            log::info!("トレイメニュー: 履歴をクリア");
+            let _ = app_handle_for_tray.emit("tray-clear-history", ());
+          }
+          "remove_duplicates" => {
+            log::info!("トレイメニュー: 重複を削除");
+            let _ = app_handle_for_tray.emit("tray-remove-duplicates", ());
+          }
+          "quit" => {
+            log::info!("トレイメニュー: アプリケーション終了");
+            app_handle_for_tray.exit(0);
+          }
+          _ => {}
+        })
+        .on_tray_icon_event(|_tray, event| {
+          match event {
+            TrayIconEvent::Click { button: MouseButton::Left, .. } => {
+              log::info!("トレイアイコンをクリック");
+            }
+            TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => {
+              log::info!("トレイアイコンをダブルクリック");
+            }
+            _ => {}
+          }
+        })
+        .build(app)?;
+      
       Ok(())
     })
+    .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+    .plugin(tauri_plugin_fs::init())
+    .plugin(tauri_plugin_dialog::init())
     .invoke_handler(tauri::generate_handler![
         init_clipboard_manager,
         get_clipboard_history,
@@ -1242,7 +1655,19 @@ pub fn run() {
         remove_duplicate_bookmarks,
         find_duplicate_clipboard_items,
         find_duplicate_bookmarks,
-        cleanup_old_items
+        cleanup_old_items,
+        register_global_hotkey,
+        unregister_global_hotkey,
+        is_global_hotkey_registered,
+        show_main_window,
+        hide_main_window,
+        set_dock_icon_visibility,
+        minimize_to_tray,
+        restore_from_tray,
+        check_accessibility_permission,
+        request_accessibility_permission,
+        check_permissions_status,
+        get_permission_instructions
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

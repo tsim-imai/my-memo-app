@@ -23,6 +23,39 @@ async function initApp() {
       await loadRecentIPs()
     })
     
+    // ホットキートリガーイベントをリッスン
+    await listen('hotkey-triggered', async (event) => {
+      console.log('ホットキーが押されました:', event.payload)
+      status.textContent = `ホットキーアクティブ: ${event.payload} (${new Date().toLocaleTimeString()})`
+      await loadHistory()
+      await loadRecentIPs()
+    })
+    
+    // トレイメニューイベントをリッスン
+    await listen('tray-clear-history', async (event) => {
+      console.log('トレイメニュー: 履歴クリア')
+      try {
+        await invoke('clear_clipboard_history')
+        await loadHistory()
+        status.textContent = `履歴をクリアしました (${new Date().toLocaleTimeString()})`
+      } catch (error) {
+        console.error('履歴クリアエラー:', error)
+        status.textContent = `履歴クリアエラー: ${error}`
+      }
+    })
+    
+    await listen('tray-remove-duplicates', async (event) => {
+      console.log('トレイメニュー: 重複削除')
+      try {
+        await invoke('remove_duplicate_clipboard_items')
+        await loadHistory()
+        status.textContent = `重複を削除しました (${new Date().toLocaleTimeString()})`
+      } catch (error) {
+        console.error('重複削除エラー:', error)
+        status.textContent = `重複削除エラー: ${error}`
+      }
+    })
+    
     // Tauriバックエンドと通信
     await invoke('init_clipboard_manager')
     
