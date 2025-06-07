@@ -197,6 +197,53 @@ impl ClipboardManager {
         match self.app_data.lock() {
             Ok(mut data) => {
                 *data = loaded_data;
+                
+                // 起動時の自動重複削除
+                let original_history_count = data.history.len();
+                let original_bookmarks_count = data.bookmarks.len();
+                
+                // クリップボード履歴の重複削除
+                use std::collections::HashMap;
+                let mut seen_content: HashMap<String, ClipboardItem> = HashMap::new();
+                
+                for item in data.history.iter() {
+                    let content_key = item.content.clone();
+                    
+                    if let Some(existing_item) = seen_content.get(&content_key) {
+                        if item.timestamp > existing_item.timestamp {
+                            seen_content.insert(content_key, item.clone());
+                        }
+                    } else {
+                        seen_content.insert(content_key, item.clone());
+                    }
+                }
+                
+                let mut unique_history: Vec<ClipboardItem> = seen_content.into_values().collect();
+                unique_history.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                data.history = unique_history;
+                
+                // ブックマークの重複削除
+                let mut seen_bookmarks = std::collections::HashSet::new();
+                let mut unique_bookmarks = Vec::new();
+                
+                for bookmark in data.bookmarks.iter().rev() {
+                    let content_key = format!("{}:{}", bookmark.name, bookmark.content);
+                    if !seen_bookmarks.contains(&content_key) {
+                        seen_bookmarks.insert(content_key);
+                        unique_bookmarks.push(bookmark.clone());
+                    }
+                }
+                
+                unique_bookmarks.reverse();
+                data.bookmarks = unique_bookmarks;
+                
+                let history_removed = original_history_count - data.history.len();
+                let bookmarks_removed = original_bookmarks_count - data.bookmarks.len();
+                
+                if history_removed > 0 || bookmarks_removed > 0 {
+                    log::info!("起動時自動重複削除: 履歴{}件、ブックマーク{}件を削除", history_removed, bookmarks_removed);
+                }
+                
                 log::info!("データファイルから読み込み完了: {:?}", file_path);
                 Ok(())
             }
@@ -452,34 +499,43 @@ impl ClipboardManager {
                                             
                                             // 履歴に追加
                                             if let Ok(mut data) = app_data.lock() {
-                                                // 重複チェック
-                                                let should_add = data.history.last()
-                                                    .map(|item| item.content != text)
-                                                    .unwrap_or(true);
-                                                    
-                                                if should_add {
-                                                    let item = ClipboardItem {
-                                                        id: Uuid::new_v4().to_string(),
-                                                        content: text.clone(),
-                                                        content_type: "text".to_string(),
-                                                        timestamp: Utc::now(),
-                                                        size: text.len(),
-                                                        access_count: 0,
-                                                        last_accessed: None,
-                                                    };
-                                                    
-                                                    // 設定で指定された件数制限
-                                                    let limit = data.settings.history_limit;
-                                                    if data.history.len() >= limit {
-                                                        data.history.remove(0);
+                                                // 完全重複アイテムを検索・削除
+                                                let mut removed_count = 0;
+                                                data.history.retain(|item| {
+                                                    if item.content == text {
+                                                        removed_count += 1;
+                                                        false // 削除
+                                                    } else {
+                                                        true // 保持
                                                     }
-                                                    
-                                                    data.history.push(item);
-                                                    log::info!("クリップボード変更検出: {} chars", text.len());
-                                                    
-                                                    // フロントエンドに通知（非同期）
-                                                    let _ = app_handle.emit("clipboard-updated", &text);
+                                                });
+                                                
+                                                if removed_count > 0 {
+                                                    log::info!("重複アイテム{}件を自動削除しました", removed_count);
                                                 }
+                                                
+                                                // 新しいアイテムを追加
+                                                let item = ClipboardItem {
+                                                    id: Uuid::new_v4().to_string(),
+                                                    content: text.clone(),
+                                                    content_type: "text".to_string(),
+                                                    timestamp: Utc::now(),
+                                                    size: text.len(),
+                                                    access_count: 0,
+                                                    last_accessed: None,
+                                                };
+                                                
+                                                // 設定で指定された件数制限
+                                                let limit = data.settings.history_limit;
+                                                if data.history.len() >= limit {
+                                                    data.history.remove(0);
+                                                }
+                                                
+                                                data.history.push(item);
+                                                log::info!("クリップボード変更検出: {} chars", text.len());
+                                                
+                                                // フロントエンドに通知（非同期）
+                                                let _ = app_handle.emit("clipboard-updated", &text);
                                             }
                                             
                                             // IP検出処理
@@ -1207,28 +1263,27 @@ fn remove_duplicate_clipboard_items(
         Ok(mut data) => {
             let original_count = data.history.len();
             
-            // メモリ最適化: ハッシュベースの重複削除
+            // メモリ最適化: 最新を保持する重複削除
             use std::collections::HashMap;
-            let mut seen_hashes: HashMap<u64, usize> = HashMap::new();
-            let mut unique_items = Vec::new();
+            let mut seen_content: HashMap<String, ClipboardItem> = HashMap::new();
             
-            // ハッシュ値で重複チェック（メモリ効率的）
-            for (index, item) in data.history.iter().enumerate().rev() {
-                use std::collections::hash_map::DefaultHasher;
-                use std::hash::{Hash, Hasher};
+            // 最新のアイテムを保持（後から来るもので上書き）
+            for item in data.history.iter() {
+                let content_key = item.content.clone();
                 
-                let mut hasher = DefaultHasher::new();
-                item.content.hash(&mut hasher);
-                let content_hash = hasher.finish();
-                
-                if !seen_hashes.contains_key(&content_hash) {
-                    seen_hashes.insert(content_hash, index);
-                    unique_items.push(item.clone());
+                // 同じコンテンツがある場合、より新しいものを保持
+                if let Some(existing_item) = seen_content.get(&content_key) {
+                    if item.timestamp > existing_item.timestamp {
+                        seen_content.insert(content_key, item.clone());
+                    }
+                } else {
+                    seen_content.insert(content_key, item.clone());
                 }
             }
             
-            // 元の順序に戻す（古い順）
-            unique_items.reverse();
+            // 重複削除後のアイテムをタイムスタンプ順にソート
+            let mut unique_items: Vec<ClipboardItem> = seen_content.into_values().collect();
+            unique_items.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
             data.history = unique_items;
             
             let removed_count = original_count - data.history.len();

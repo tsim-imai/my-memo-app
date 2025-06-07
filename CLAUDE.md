@@ -5,19 +5,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Common Development Commands
 
 ### Development
-- `npm run dev` - Start Vite development server (frontend only)
-- `cargo tauri dev` - Start full Tauri development mode (frontend + backend)
-- `source $HOME/.cargo/env && cargo tauri dev` - If cargo/tauri not in PATH
+- `source $HOME/.cargo/env && cargo tauri dev` - Start full Tauri development mode (required for Rust environment)
+- `npm run dev` - Start Vite development server (frontend only, for UI testing)
 
-### Building
+### Building  
 - `npm run build` - Build frontend for production
 - `cargo tauri build` - Build complete application bundle for distribution
 
+### Troubleshooting
+- If `cargo tauri dev` fails with "command not found", run `source $HOME/.cargo/env` first
+- Port 1420 conflicts: Kill existing processes with `lsof -ti:1420 | xargs kill -9`
+- Compilation errors: Check for Unicode string syntax in Rust (use raw strings, not escape sequences)
+
 ### Project Structure
-- Frontend: Vite + vanilla HTML/CSS/JavaScript
-- Backend: Rust with Tauri framework
-- Configuration: `src-tauri/tauri.conf.json`
-- Dependencies: `package.json` (frontend), `src-tauri/Cargo.toml` (backend)
+- **Frontend**: Single-page app with `index.html`, `main.js`, vanilla CSS
+- **Backend**: Rust with Tauri framework in `src-tauri/src/lib.rs`
+- **Configuration**: `src-tauri/tauri.conf.json` (Tauri settings), `src-tauri/Cargo.toml` (Rust deps)
 
 ## Architecture Overview
 
@@ -25,20 +28,22 @@ This is a **completed** macOS-specific clipboard management application built wi
 
 ### Core Components
 
-**Frontend (main.js)**
-- Modern tabbed interface with 4 main sections: History, Bookmarks, IP History, Settings
-- Real-time communication with Rust backend via Tauri's `invoke()` API
-- Complete keyboard navigation support (Cmd+1-4 for tabs, arrow keys, Cmd+F for search)
-- Dark mode support with localStorage persistence
-- Japanese UI text throughout
-- Advanced features: preview modals, usage frequency tracking, search/sort functionality
+**Frontend Architecture (main.js + index.html)**
+- **Native macOS Design**: Fullscreen layout without app header (uses system title bar)
+- **Tabbed Interface**: 4 main sections with simplified panel headers removed
+- **Event-Driven**: Real-time updates via Tauri's `invoke()` API and `listen()` events
+- **Keyboard-First**: Complete navigation (Cmd+1-4 tabs, arrows, Cmd+F search, Delete actions)
+- **Responsive Flexbox**: Full viewport utilization with proper scroll handling
+- **Enhanced Functions**: Function wrapping pattern in `enhanceDisplayFunctions()` for UI updates
+- **Japanese UI**: All user-facing text in Japanese, console logging for status updates
 
-**Backend (src-tauri/src/lib.rs)**
-- `ClipboardManager` struct with `Arc<Mutex<AppData>>` for thread-safe state management
-- Real-time clipboard monitoring (250ms intervals with adaptive error handling)
-- Comprehensive Tauri command API (40+ commands) for all CRUD operations
-- Advanced features: memory optimization, file-based logging, system diagnostics
-- IP auto-detection with regex pattern `(?:[0-9]{1,3}\.){3}[0-9]{1,3}`
+**Backend Architecture (src-tauri/src/lib.rs)**
+- **Thread-Safe State**: `ClipboardManager` with `Arc<Mutex<AppData>>` for concurrent access
+- **Real-Time Monitoring**: 250ms clipboard polling with hash-based change detection
+- **Error-Tolerant Init**: Non-blocking initialization with graceful fallback for permissions
+- **40+ Tauri Commands**: Complete CRUD API with consistent `Result<T, String>` error handling
+- **Auto-IP Detection**: Regex pattern `r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b"` with validation
+- **Memory Optimization**: Hash-based duplicate detection, automatic cleanup of large/old items
 
 **Data Model**
 ```rust
@@ -62,11 +67,11 @@ Each item tracks `access_count` and `last_accessed` for intelligent sorting and 
 - JSON data persistence with atomic file operations and backup recovery
 
 **Advanced UX**
-- Complete keyboard navigation with shortcuts
-- Smart content preview (JSON, URL, code detection)
-- Usage frequency tracking and intelligent sorting
-- Dark/light mode theming
-- Search and filtering across all content types
+- **Streamlined Operations**: No confirmation dialogs for delete/clear actions (instant feedback)
+- **Smart Content Preview**: JSON, URL, code detection with modal display
+- **Usage Frequency Tracking**: `access_count` and `last_accessed` for intelligent sorting
+- **Adaptive Dark Mode**: System-aware theming with localStorage persistence
+- **Real-Time Search**: Debounced search across all content types with live filtering
 
 **Performance & Reliability**
 - Hash-based duplicate detection and memory optimization
@@ -112,11 +117,32 @@ This is a **completed production application** with all planned features impleme
 - **Error propagation**: Comprehensive `Result<T, String>` error handling
 - **Memory-efficient**: Hash-based operations and automatic cleanup
 
-### UI Language
-All user-facing text is in Japanese. Maintain this pattern for any new UI elements or error messages.
+## Development Patterns & Conventions
+
+### Error Handling
+- **Rust**: All Tauri commands return `Result<T, String>` for consistent error propagation
+- **JavaScript**: Try-catch blocks with `updateStatus()` calls for user feedback (now logs to console)
+- **Graceful Degradation**: App continues functioning even if individual features fail (e.g., hotkeys, clipboard monitoring)
+
+### State Management
+- **Centralized State**: Single `AppData` struct containing all application data
+- **Thread Safety**: All shared state wrapped in `Arc<Mutex<>>` for safe concurrent access
+- **Atomic Operations**: File writes use temporary files + rename for data integrity
+
+### UI Patterns
+- **Global Window Functions**: UI event handlers exposed as `window.functionName` for onclick attributes
+- **Function Enhancement**: `enhanceDisplayFunctions()` pattern for extending existing functions
+- **Flex Layout**: All containers use flexbox with `flex: 1` and `overflow-y: auto` for proper scrolling
+- **No Confirmation Dialogs**: Immediate actions with status feedback for better UX
+
+### Code Conventions
+- **Japanese UI Text**: All user-facing strings must be in Japanese
+- **Console Logging**: Use `console.log()` for debugging and status updates (replaces removed status header)
+- **Unicode Strings**: Use raw Japanese strings in JavaScript, avoid Unicode escape sequences in Rust
+- **Consistent Naming**: `updateStatus()`, `loadData()`, `displayItems()` patterns throughout
 
 ### Data Management
-- JSON persistence in `$APP_DATA/clipboard_data.json`
-- Automatic backups for corrupted files
-- Log files in `$APP_DATA/clipboard_manager.log` with 5MB rotation
-- Memory optimization with configurable cleanup thresholds
+- **JSON Persistence**: `$APP_DATA/clipboard_data.json` with atomic writes and backup recovery
+- **Log Rotation**: `$APP_DATA/clipboard_manager.log` with 5MB size limit and `.old` rotation
+- **Memory Limits**: Configurable cleanup thresholds for history (50 items) and IPs (10 items)
+- **Hash-Based Deduplication**: Content hashing for efficient duplicate detection and memory optimization
