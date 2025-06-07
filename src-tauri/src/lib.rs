@@ -16,6 +16,10 @@ pub struct ClipboardItem {
     pub content_type: String,
     pub timestamp: DateTime<Utc>,
     pub size: usize,
+    #[serde(default)]
+    pub access_count: u32,
+    #[serde(default)]
+    pub last_accessed: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +30,10 @@ pub struct BookmarkItem {
     pub content_type: String,
     pub timestamp: DateTime<Utc>,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub access_count: u32,
+    #[serde(default)]
+    pub last_accessed: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +236,8 @@ impl ClipboardManager {
             content_type,
             timestamp: Utc::now(),
             size: content.len(),
+            access_count: 0,
+            last_accessed: None,
         };
 
         match self.app_data.lock() {
@@ -335,6 +345,8 @@ impl ClipboardManager {
                                             content_type: "text".to_string(),
                                             timestamp: Utc::now(),
                                             size: text.len(),
+                                            access_count: 0,
+                                            last_accessed: None,
                                         };
                                         
                                         // 設定で指定された件数制限
@@ -469,6 +481,8 @@ fn add_bookmark(
         content_type,
         timestamp: Utc::now(),
         tags,
+        access_count: 0,
+        last_accessed: None,
     };
 
     match state.app_data.lock() {
@@ -879,6 +893,8 @@ fn duplicate_bookmark(
                     content_type: original.content_type.clone(),
                     timestamp: Utc::now(),
                     tags: original.tags.clone(),
+                    access_count: 0,
+                    last_accessed: None,
                 };
                 
                 data.bookmarks.push(new_bookmark);
@@ -1512,6 +1528,138 @@ async fn get_permission_instructions() -> Result<serde_json::Value, String> {
     Ok(instructions)
 }
 
+#[tauri::command]
+fn increment_access_count(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+    item_id: String,
+    item_type: String, // "history" または "bookmark"
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            let now = Utc::now();
+            let mut updated = false;
+            
+            if item_type == "history" {
+                if let Some(item) = data.history.iter_mut().find(|item| item.id == item_id) {
+                    item.access_count += 1;
+                    item.last_accessed = Some(now);
+                    updated = true;
+                }
+            } else if item_type == "bookmark" {
+                if let Some(bookmark) = data.bookmarks.iter_mut().find(|bookmark| bookmark.id == item_id) {
+                    bookmark.access_count += 1;
+                    bookmark.last_accessed = Some(now);
+                    updated = true;
+                }
+            }
+            
+            if updated {
+                log::info!("アクセス回数を更新: {} ({})", item_id, item_type);
+                
+                // データを自動保存
+                drop(data);
+                if let Err(e) = state.save_to_file(&app_handle) {
+                    log::warn!("自動保存エラー: {}", e);
+                }
+                
+                Ok("Access count incremented successfully".to_string())
+            } else {
+                Err("Item not found".to_string())
+            }
+        }
+        Err(_) => Err("Failed to access app data".to_string()),
+    }
+}
+
+#[tauri::command]
+fn get_sorted_history(
+    state: State<'_, ClipboardManager>,
+    sort_by: String, // "recent", "frequency", "alphabetical"
+) -> Result<Vec<ClipboardItem>, String> {
+    match state.app_data.lock() {
+        Ok(data) => {
+            let mut history = data.history.clone();
+            
+            match sort_by.as_str() {
+                "frequency" => {
+                    // アクセス回数が多い順、次に最後のアクセス時間順
+                    history.sort_by(|a, b| {
+                        match b.access_count.cmp(&a.access_count) {
+                            std::cmp::Ordering::Equal => {
+                                match (&b.last_accessed, &a.last_accessed) {
+                                    (Some(b_time), Some(a_time)) => b_time.cmp(a_time),
+                                    (Some(_), None) => std::cmp::Ordering::Less,
+                                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                                    (None, None) => b.timestamp.cmp(&a.timestamp),
+                                }
+                            }
+                            other => other,
+                        }
+                    });
+                }
+                "alphabetical" => {
+                    // アルファベット順
+                    history.sort_by(|a, b| a.content.to_lowercase().cmp(&b.content.to_lowercase()));
+                }
+                _ => {
+                    // デフォルト: recent（新しい順）
+                    history.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                }
+            }
+            
+            Ok(history)
+        }
+        Err(_) => Err("Failed to access clipboard history".to_string()),
+    }
+}
+
+#[tauri::command]
+fn get_sorted_bookmarks(
+    state: State<'_, ClipboardManager>,
+    sort_by: String, // "recent", "frequency", "alphabetical", "name"
+) -> Result<Vec<BookmarkItem>, String> {
+    match state.app_data.lock() {
+        Ok(data) => {
+            let mut bookmarks = data.bookmarks.clone();
+            
+            match sort_by.as_str() {
+                "frequency" => {
+                    // アクセス回数が多い順、次に最後のアクセス時間順
+                    bookmarks.sort_by(|a, b| {
+                        match b.access_count.cmp(&a.access_count) {
+                            std::cmp::Ordering::Equal => {
+                                match (&b.last_accessed, &a.last_accessed) {
+                                    (Some(b_time), Some(a_time)) => b_time.cmp(a_time),
+                                    (Some(_), None) => std::cmp::Ordering::Less,
+                                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                                    (None, None) => b.timestamp.cmp(&a.timestamp),
+                                }
+                            }
+                            other => other,
+                        }
+                    });
+                }
+                "alphabetical" => {
+                    // 内容のアルファベット順
+                    bookmarks.sort_by(|a, b| a.content.to_lowercase().cmp(&b.content.to_lowercase()));
+                }
+                "name" => {
+                    // 名前のアルファベット順
+                    bookmarks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                }
+                _ => {
+                    // デフォルト: recent（新しい順）
+                    bookmarks.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                }
+            }
+            
+            Ok(bookmarks)
+        }
+        Err(_) => Err("Failed to access bookmarks".to_string()),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -1665,7 +1813,10 @@ pub fn run() {
         check_accessibility_permission,
         request_accessibility_permission,
         check_permissions_status,
-        get_permission_instructions
+        get_permission_instructions,
+        increment_access_count,
+        get_sorted_history,
+        get_sorted_bookmarks
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
