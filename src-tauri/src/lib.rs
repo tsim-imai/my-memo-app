@@ -1799,6 +1799,37 @@ async fn set_window_position(app_handle: AppHandle, x: i32, y: i32) -> Result<St
 }
 
 #[tauri::command]
+async fn get_window_position(app_handle: AppHandle) -> Result<serde_json::Value, String> {
+    if let Some(small_window) = app_handle.get_webview_window("small") {
+        match small_window.outer_position() {
+            Ok(position) => {
+                let pos = serde_json::json!({
+                    "x": position.x,
+                    "y": position.y
+                });
+                Ok(pos)
+            }
+            Err(e) => {
+                log::error!("ウィンドウ位置取得失敗: {}", e);
+                Err(format!("Failed to get window position: {}", e))
+            }
+        }
+    } else {
+        Err("Small window not found".to_string())
+    }
+}
+
+#[tauri::command]
+async fn get_screen_bounds() -> Result<serde_json::Value, String> {
+    // macOSのデフォルト画面サイズを使用（実際の実装は複雑なのでフォールバック）
+    let bounds = serde_json::json!({
+        "width": 1920,
+        "height": 1080
+    });
+    Ok(bounds)
+}
+
+#[tauri::command]
 async fn hide_small_window(app_handle: AppHandle) -> Result<String, String> {
     if let Some(small_window) = app_handle.get_webview_window("small") {
         match small_window.hide() {
@@ -2207,6 +2238,8 @@ pub fn run() {
         show_small_window,
         hide_small_window,
         set_window_position,
+        get_window_position,
+        get_screen_bounds,
         paste_content
     ])
     .run(tauri::generate_context!())
