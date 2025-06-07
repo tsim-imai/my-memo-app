@@ -269,11 +269,17 @@ function showError(message) {
 
 // イベントリスナー設定
 function setupEventListeners() {
-  // クリップボード更新イベント
-  listen('clipboard-updated', async () => {
-    console.log('クリップボード更新検出')
-    await loadData()
-  })
+  try {
+    // クリップボード更新イベント
+    listen('clipboard-updated', async () => {
+      console.log('クリップボード更新検出')
+      await loadData()
+    })
+  } catch (error) {
+    console.warn('イベントリスナー設定をスキップ:', error)
+    // イベントリスナーが設定できない場合は定期的にデータを更新
+    setInterval(loadData, 5000) // 5秒ごとに更新
+  }
 }
 
 // ユーティリティ関数
@@ -310,3 +316,4 @@ function formatFileSize(bytes) {
 
 // グローバル関数として公開
 window.copyAndPaste = copyAndPaste
+window.closeWindow = closeWindow
