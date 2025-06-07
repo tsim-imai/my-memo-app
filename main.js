@@ -90,6 +90,9 @@ async function initApp() {
     // イベントリスナーを設定
     setupEventListeners()
     
+    // 表示関数を拡張
+    enhanceDisplayFunctions()
+    
     // Tauriバックエンドと通信
     await invoke('init_clipboard_manager')
     
@@ -197,11 +200,7 @@ function setupSearchListeners() {
 // ボタンイベントの設定
 function setupButtonEvents() {
   // 履歴操作
-  elements.clearHistoryBtn.addEventListener('click', () => {
-    if (confirm('履歴をすべてクリアしますか？')) {
-      clearHistory()
-    }
-  })
+  elements.clearHistoryBtn.addEventListener('click', clearHistory)
   
   elements.removeDuplicatesBtn.addEventListener('click', removeDuplicates)
   
@@ -209,11 +208,7 @@ function setupButtonEvents() {
   elements.addBookmarkBtn.addEventListener('click', () => openBookmarkModal())
   
   // IP操作
-  elements.clearIpsBtn.addEventListener('click', () => {
-    if (confirm('IP履歴をすべてクリアしますか？')) {
-      clearIPs()
-    }
-  })
+  elements.clearIpsBtn.addEventListener('click', clearIPs)
   
   // 権限確認
   elements.checkPermissionsBtn.addEventListener('click', checkPermissions)
@@ -941,14 +936,13 @@ window.addToBookmarks = async function(itemId) {
 }
 
 window.deleteHistoryItem = async function(itemId) {
-  if (confirm('この履歴アイテムを削除しますか？')) {
-    try {
-      await invoke('delete_clipboard_item', { itemId })
-      await loadHistory()
-      updateStatus('履歴アイテムを削除しました', 'success')
-    } catch (error) {
-      console.error('削除エラー:', error)
-    }
+  try {
+    await invoke('delete_clipboard_item', { itemId })
+    await loadHistory()
+    updateStatus('履歴アイテムを削除しました', 'success')
+  } catch (error) {
+    console.error('削除エラー:', error)
+    updateStatus(`削除エラー: ${error}`, 'error')
   }
 }
 
@@ -997,14 +991,13 @@ window.duplicateBookmark = async function(bookmarkId) {
 }
 
 window.deleteBookmark = async function(bookmarkId) {
-  if (confirm('このブックマークを削除しますか？')) {
-    try {
-      await invoke('delete_bookmark', { bookmarkId })
-      await loadBookmarks()
-      updateStatus('ブックマークを削除しました', 'success')
-    } catch (error) {
-      console.error('削除エラー:', error)
-    }
+  try {
+    await invoke('delete_bookmark', { bookmarkId })
+    await loadBookmarks()
+    updateStatus('ブックマークを削除しました', 'success')
+  } catch (error) {
+    console.error('削除エラー:', error)
+    updateStatus(`削除エラー: ${error}`, 'error')
   }
 }
 
@@ -1287,28 +1280,30 @@ window.switchTab = function(tabName) {
   setTimeout(updateSelectedItems, 100) // 少し遅延してDOMが更新されてから実行
 }
 
-// データ読み込み後にアイテムを更新
-const originalDisplayHistory = displayHistory
-function displayHistory(history) {
-  originalDisplayHistory(history)
-  if (currentTab === 'history') {
-    setTimeout(updateSelectedItems, 50)
+// データ読み込み後にアイテムを更新するヘルパー関数
+function enhanceDisplayFunctions() {
+  const originalDisplayHistory = window.displayHistory
+  window.displayHistory = function(history) {
+    originalDisplayHistory(history)
+    if (currentTab === 'history') {
+      setTimeout(updateSelectedItems, 50)
+    }
   }
-}
 
-const originalDisplayBookmarks = displayBookmarks
-function displayBookmarks(bookmarks) {
-  originalDisplayBookmarks(bookmarks)
-  if (currentTab === 'bookmarks') {
-    setTimeout(updateSelectedItems, 50)
+  const originalDisplayBookmarks = window.displayBookmarks
+  window.displayBookmarks = function(bookmarks) {
+    originalDisplayBookmarks(bookmarks)
+    if (currentTab === 'bookmarks') {
+      setTimeout(updateSelectedItems, 50)
+    }
   }
-}
 
-const originalDisplayIPs = displayIPs
-function displayIPs(ips) {
-  originalDisplayIPs(ips)
-  if (currentTab === 'ips') {
-    setTimeout(updateSelectedItems, 50)
+  const originalDisplayIPs = window.displayIPs
+  window.displayIPs = function(ips) {
+    originalDisplayIPs(ips)
+    if (currentTab === 'ips') {
+      setTimeout(updateSelectedItems, 50)
+    }
   }
 }
 

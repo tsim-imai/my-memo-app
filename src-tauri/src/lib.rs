@@ -562,10 +562,12 @@ async fn init_clipboard_manager(
     // 自動保存を開始
     state.start_auto_save(app_handle.clone());
     
-    // クリップボード監視を開始
-    state.start_monitoring(app_handle.clone())?;
+    // クリップボード監視を開始（エラーを無視）
+    if let Err(e) = state.start_monitoring(app_handle.clone()) {
+        log::warn!("クリップボード監視開始失敗: {}", e);
+    }
     
-    // グローバルホットキーを自動登録
+    // グローバルホットキーを自動登録（エラーを無視）
     match register_global_hotkey(app_handle.clone(), state.clone()).await {
         Ok(msg) => log::info!("グローバルホットキー自動登録: {}", msg),
         Err(e) => log::warn!("グローバルホットキー自動登録失敗: {}", e),
