@@ -1721,6 +1721,83 @@ async fn restore_from_tray(app_handle: AppHandle) -> Result<String, String> {
 
 #[cfg(target_os = "macos")]
 #[tauri::command]
+async fn paste_content(content: String) -> Result<String, String> {
+    use std::process::Command;
+    
+    // macOSでキーボードイベントをシミュレート（Cmd+V）
+    let script = format!(
+        r#"
+        tell application "System Events"
+            set the clipboard to "{}"
+            delay 0.1
+            keystroke "v" using command down
+        end tell
+        "#,
+        content.replace("\"", "\\\"").replace("\n", "\\n")
+    );
+    
+    match Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                log::info!("貼り付け成功: {} chars", content.len());
+                Ok("Content pasted successfully".to_string())
+            } else {
+                let error = String::from_utf8_lossy(&output.stderr);
+                log::error!("貼り付け失敗: {}", error);
+                Err(format!("Failed to paste: {}", error))
+            }
+        }
+        Err(e) => {
+            log::error!("AppleScript実行エラー: {}", e);
+            Err(format!("AppleScript execution failed: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn show_small_window(app_handle: AppHandle) -> Result<String, String> {
+    if let Some(small_window) = app_handle.get_webview_window("small") {
+        match small_window.show() {
+            Ok(_) => {
+                let _ = small_window.set_focus();
+                let _ = small_window.center();
+                log::info!("スモールウィンドウを表示");
+                Ok("Small window shown successfully".to_string())
+            }
+            Err(e) => {
+                log::error!("スモールウィンドウ表示失敗: {}", e);
+                Err(format!("Failed to show small window: {}", e))
+            }
+        }
+    } else {
+        Err("Small window not found".to_string())
+    }
+}
+
+#[tauri::command]
+async fn hide_small_window(app_handle: AppHandle) -> Result<String, String> {
+    if let Some(small_window) = app_handle.get_webview_window("small") {
+        match small_window.hide() {
+            Ok(_) => {
+                log::info!("スモールウィンドウを非表示");
+                Ok("Small window hidden successfully".to_string())
+            }
+            Err(e) => {
+                log::error!("スモールウィンドウ非表示失敗: {}", e);
+                Err(format!("Failed to hide small window: {}", e))
+            }
+        }
+    } else {
+        Err("Small window not found".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
 async fn check_accessibility_permission() -> Result<bool, String> {
     use std::process::Command;
     
@@ -1968,11 +2045,11 @@ pub fn run() {
       let _ = app.global_shortcut().on_shortcut(shortcut, move |_app_handle, _shortcut, _event| {
         log::info!("グローバルホットキーが押されました: Cmd+Shift+V");
         
-        // メインウィンドウを表示・フォーカス
-        if let Some(main_window) = app_handle.get_webview_window("main") {
-          let _ = main_window.show();
-          let _ = main_window.set_focus();
-          let _ = main_window.unminimize();
+        // スモールウィンドウを表示・フォーカス
+        if let Some(small_window) = app_handle.get_webview_window("small") {
+          let _ = small_window.show();
+          let _ = small_window.set_focus();
+          let _ = small_window.center();
           
           // フロントエンドにホットキーイベントを通知
           let _ = app_handle.emit("hotkey-triggered", "cmd+shift+v");
@@ -2106,7 +2183,10 @@ pub fn run() {
         optimize_memory,
         get_app_logs,
         clear_app_logs,
-        get_app_diagnostics
+        get_app_diagnostics,
+        show_small_window,
+        hide_small_window,
+        paste_content
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

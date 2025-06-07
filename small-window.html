@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>クリップボード選択</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    .small-container {
+      width: 400px;
+      max-height: 500px;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
+    }
+
+    .small-header {
+      padding: 12px 16px;
+      background: rgba(0, 0, 0, 0.03);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .small-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1d1d1f;
+    }
+
+    .small-tabs {
+      display: flex;
+      gap: 4px;
+    }
+
+    .small-tab {
+      padding: 4px 8px;
+      font-size: 12px;
+      background: none;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      color: #666;
+      transition: all 0.2s ease;
+    }
+
+    .small-tab.active {
+      background: #007AFF;
+      color: white;
+    }
+
+    .small-tab:hover:not(.active) {
+      background: rgba(0, 0, 0, 0.05);
+    }
+
+    .small-content {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .small-list {
+      padding: 8px;
+    }
+
+    .small-item {
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      margin-bottom: 4px;
+      background: white;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .small-item:hover {
+      background: #f0f9ff;
+      border-color: #007AFF;
+      transform: translateY(-1px);
+    }
+
+    .small-item:active {
+      transform: translateY(0);
+      background: #e6f3ff;
+    }
+
+    .small-item-icon {
+      font-size: 14px;
+      margin-right: 8px;
+      opacity: 0.6;
+    }
+
+    .small-item-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .small-item-text {
+      font-size: 13px;
+      line-height: 1.3;
+      color: #1d1d1f;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 280px;
+    }
+
+    .small-item-meta {
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+    }
+
+    .small-item-size {
+      font-size: 10px;
+      color: #999;
+      margin-left: 8px;
+      padding: 2px 6px;
+      background: rgba(0, 0, 0, 0.05);
+      border-radius: 4px;
+    }
+
+    .empty-state {
+      padding: 40px 20px;
+      text-align: center;
+      color: #666;
+      font-size: 14px;
+    }
+
+    .empty-icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+      opacity: 0.3;
+    }
+
+    /* スクロールバーのスタイル */
+    .small-content::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .small-content::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .small-content::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 3px;
+    }
+
+    .small-content::-webkit-scrollbar-thumb:hover {
+      background: rgba(0, 0, 0, 0.3);
+    }
+
+    /* ダークモード対応 */
+    @media (prefers-color-scheme: dark) {
+      body {
+        background: #1c1c1e;
+        color: #ffffff;
+      }
+
+      .small-container {
+        background: rgba(28, 28, 30, 0.95);
+        border-color: rgba(255, 255, 255, 0.1);
+      }
+
+      .small-header {
+        background: rgba(255, 255, 255, 0.03);
+        border-bottom-color: rgba(255, 255, 255, 0.08);
+      }
+
+      .small-title {
+        color: #ffffff;
+      }
+
+      .small-tab {
+        color: #999;
+      }
+
+      .small-tab:hover:not(.active) {
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .small-item {
+        background: #2c2c2e;
+        border-color: rgba(255, 255, 255, 0.06);
+      }
+
+      .small-item:hover {
+        background: #1a3a5c;
+        border-color: #007AFF;
+      }
+
+      .small-item:active {
+        background: #144a73;
+      }
+
+      .small-item-text {
+        color: #ffffff;
+      }
+
+      .small-item-size {
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .empty-state {
+        color: #999;
+      }
+    }
+
+    /* アニメーション */
+    .small-container {
+      animation: slideIn 0.2s ease-out;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-10px) scale(0.95);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="small-container">
+    <div class="small-header">
+      <span class="small-title">📋 クリップボード選択</span>
+      <div class="small-tabs">
+        <button class="small-tab active" data-tab="history">履歴</button>
+        <button class="small-tab" data-tab="bookmarks">⭐</button>
+        <button class="small-tab" data-tab="ips">🌐</button>
+      </div>
+    </div>
+    
+    <div class="small-content">
+      <!-- 履歴タブ -->
+      <div id="small-history" class="small-list">
+        <div class="empty-state">
+          <div class="empty-icon">📋</div>
+          <div>履歴を読み込み中...</div>
+        </div>
+      </div>
+
+      <!-- ブックマークタブ -->
+      <div id="small-bookmarks" class="small-list" style="display: none;">
+        <div class="empty-state">
+          <div class="empty-icon">⭐</div>
+          <div>ブックマークを読み込み中...</div>
+        </div>
+      </div>
+
+      <!-- IPタブ -->
+      <div id="small-ips" class="small-list" style="display: none;">
+        <div class="empty-state">
+          <div class="empty-icon">🌐</div>
+          <div>IP履歴を読み込み中...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="small-window.js"></script>
+</body>
+</html>
