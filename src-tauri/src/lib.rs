@@ -1779,6 +1779,108 @@ async fn show_small_window(app_handle: AppHandle) -> Result<String, String> {
 }
 
 
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn get_mouse_position() -> Result<serde_json::Value, String> {
+    use std::process::Command;
+    
+    // macOSでマウス位置を取得するAppleScript
+    let script = "tell application \"System Events\" to return (item 1 of (get position of mouse)) & \",\" & (item 2 of (get position of mouse))";
+    
+    match Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                let mouse_pos = String::from_utf8_lossy(&output.stdout);
+                let coords: Vec<&str> = mouse_pos.trim().split(',').collect();
+                
+                if coords.len() == 2 {
+                    if let (Ok(x), Ok(y)) = (coords[0].parse::<i32>(), coords[1].parse::<i32>()) {
+                        let position = serde_json::json!({
+                            "x": x,
+                            "y": y
+                        });
+                        log::info!("マウス位置: x={}, y={}", x, y);
+                        return Ok(position);
+                    }
+                }
+            }
+            
+            // フォールバック（画面中央）
+            let fallback = serde_json::json!({
+                "x": 960,
+                "y": 540
+            });
+            Ok(fallback)
+        }
+        Err(e) => {
+            log::error!("マウス位置取得エラー: {}", e);
+            let fallback = serde_json::json!({
+                "x": 960,
+                "y": 540
+            });
+            Ok(fallback)
+        }
+    }
+}
+
+#[tauri::command]
+async fn show_small_window_at_mouse(app_handle: AppHandle) -> Result<String, String> {
+    if let Some(small_window) = app_handle.get_webview_window("small") {
+        // マウス位置を取得
+        let mouse_pos = match get_mouse_position().await {
+            Ok(pos) => pos,
+            Err(_) => serde_json::json!({"x": 960, "y": 540})
+        };
+        
+        let mouse_x = mouse_pos["x"].as_i64().unwrap_or(960) as i32;
+        let mouse_y = mouse_pos["y"].as_i64().unwrap_or(540) as i32;
+        
+        // ウィンドウサイズ
+        let window_width = 400;
+        let window_height = 500;
+        
+        // 位置計算
+        // X: ウィンドウの左端がマウス位置
+        // Y: ウィンドウの中央がマウス位置
+        let window_x = mouse_x;
+        let window_y = mouse_y - (window_height / 2);
+        
+        // 画面境界チェック（簡易版）
+        let final_x = std::cmp::max(0, std::cmp::min(window_x, 1920 - window_width));
+        let final_y = std::cmp::max(0, std::cmp::min(window_y, 1080 - window_height));
+        
+        // ウィンドウ位置を設定
+        use tauri::Position;
+        let position = Position::Physical(tauri::PhysicalPosition { x: final_x, y: final_y });
+        
+        match small_window.set_position(position) {
+            Ok(_) => {
+                match small_window.show() {
+                    Ok(_) => {
+                        let _ = small_window.set_focus();
+                        log::info!("スモールウィンドウを表示: x={}, y={}", final_x, final_y);
+                        Ok(format!("Small window shown at mouse position: x={}, y={}", final_x, final_y))
+                    }
+                    Err(e) => {
+                        log::error!("スモールウィンドウ表示失敗: {}", e);
+                        Err(format!("Failed to show small window: {}", e))
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("ウィンドウ位置設定失敗: {}", e);
+                Err(format!("Failed to set window position: {}", e))
+            }
+        }
+    } else {
+        Err("Small window not found".to_string())
+    }
+}
+
 #[tauri::command]
 async fn hide_small_window(app_handle: AppHandle) -> Result<String, String> {
     if let Some(small_window) = app_handle.get_webview_window("small") {
@@ -2046,14 +2148,17 @@ pub fn run() {
       let _ = app.global_shortcut().on_shortcut(shortcut, move |_app_handle, _shortcut, _event| {
         log::info!("グローバルホットキーが押されました: Cmd+Shift+V");
         
-        // スモールウィンドウを表示・フォーカス
-        if let Some(small_window) = app_handle.get_webview_window("small") {
-          let _ = small_window.show();
-          let _ = small_window.set_focus();
-          let _ = small_window.center();
-          
-          // フロントエンドにホットキーイベントを通知
-          let _ = app_handle.emit("hotkey-triggered", "cmd+shift+v");
+        // マウス位置にスモールウィンドウを表示
+        let app_handle_clone = app_handle.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+          runtime.spawn(async move {
+            if let Err(e) = show_small_window_at_mouse(app_handle_clone.clone()).await {
+              log::error!("スモールウィンドウ表示エラー: {}", e);
+            }
+            
+            // フロントエンドにホットキーイベントを通知
+            let _ = app_handle_clone.emit("hotkey-triggered", "cmd+shift+v");
+          });
         }
       });
       
@@ -2186,7 +2291,9 @@ pub fn run() {
         clear_app_logs,
         get_app_diagnostics,
         show_small_window,
+        show_small_window_at_mouse,
         hide_small_window,
+        get_mouse_position,
         paste_content
     ])
     .run(tauri::generate_context!())

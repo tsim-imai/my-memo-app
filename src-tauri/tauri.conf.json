@@ -30,7 +30,6 @@
         "fullscreen": false,
         "visible": false,
         "decorations": false,
-        "center": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "dragDropEnabled": false,
