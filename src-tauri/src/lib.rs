@@ -2268,8 +2268,18 @@ pub fn run() {
       log::info!("グローバルホットキー登録試行: Cmd+Shift+V");
       println!("CONSOLE: グローバルホットキー登録試行: Cmd+Shift+V");
       
-      match app.global_shortcut().on_shortcut(shortcut, move |_app_handle, _shortcut, _event| {
-        log::info!("グローバルホットキーが押されました: Cmd+Shift+V");
+      match app.global_shortcut().on_shortcut(shortcut, move |_app_handle, _shortcut, event| {
+        println!("CONSOLE: ホットキーイベント詳細: {:?}", event);
+        log::info!("グローバルホットキーが押されました: Cmd+Shift+V, イベント: {:?}", event);
+        
+        // イベントをStringに変換して判定（プレス時のみ反応）
+        let event_str = format!("{:?}", event);
+        if event_str.contains("Released") {
+          println!("CONSOLE: キー離しイベント - 処理をスキップ");
+          return; // キーを離した時は何もしない
+        }
+        
+        println!("CONSOLE: キー押下イベント - ウィンドウ表示開始");
         
         // マウス位置にスモールウィンドウを表示
         let app_handle_clone = app_handle.clone();
@@ -2309,6 +2319,22 @@ pub fn run() {
           log::error!("tokioランタイムが見つかりません - 同期処理で実行");
           // 同期処理でマウス位置にウィンドウを表示
           if let Some(small_window) = app_handle_clone.get_webview_window("small") {
+            println!("CONSOLE: スモールウィンドウ発見 - 現在の状態確認");
+            
+            // ウィンドウの現在の状態をログ出力
+            if let Ok(is_visible) = small_window.is_visible() {
+              println!("CONSOLE: ウィンドウ表示状態: {}", is_visible);
+            }
+            if let Ok(is_focused) = small_window.is_focused() {
+              println!("CONSOLE: ウィンドウフォーカス状態: {}", is_focused);
+            }
+            if let Ok(position) = small_window.outer_position() {
+              println!("CONSOLE: 現在のウィンドウ位置: {:?}", position);
+            }
+            
+            // ウィンドウを確実に非表示にしてからリセット
+            let _ = small_window.hide();
+            println!("CONSOLE: ウィンドウを明示的に非表示化");
             
             // 同期でマウス位置を取得
             let mouse_pos = get_mouse_position_sync();
@@ -2317,22 +2343,11 @@ pub fn run() {
             println!("CONSOLE: 生マウス座標（既にTauri座標系）: x={}, y={}", raw_mouse_x, raw_mouse_y);
             
             // 座標変換は不要、CoreGraphicsが既にTauri形式の座標を返している
-            // 負の座標の場合は、メインディスプレイの相対座標に変換
-            let mouse_x = if raw_mouse_x < 0 {
-              // 外部ディスプレイの場合、メインディスプレイ座標系に変換を試行
-              // とりあえず絶対値を取って、右端付近に配置
-              println!("CONSOLE: 外部ディスプレイ検出、メインディスプレイに強制移動");
-              1520 // 画面右端付近
-            } else {
-              raw_mouse_x
-            };
+            // マルチディスプレイ対応：負の座標もそのまま使用
+            let mouse_x = raw_mouse_x; // 負の座標も含めてそのまま使用
+            let mouse_y = raw_mouse_y; // 負の座標も含めてそのまま使用
             
-            let mouse_y = if raw_mouse_y < 0 {
-              540 // 画面中央
-            } else {
-              raw_mouse_y
-            };
-            
+            println!("CONSOLE: マルチディスプレイ対応：全座標をそのまま使用");
             println!("CONSOLE: 最終マウス座標: x={}, y={}", mouse_x, mouse_y);
             
             // ウィンドウサイズ
@@ -2380,13 +2395,26 @@ pub fn run() {
             use tauri::Position;
             let position = Position::Physical(tauri::PhysicalPosition { x: final_x, y: final_y });
             
+            println!("CONSOLE: 位置設定実行前 - target: x={}, y={}", final_x, final_y);
+            
             match small_window.set_position(position) {
               Ok(_) => {
                 println!("CONSOLE: 同期位置設定成功");
+                
+                // 位置設定後の確認
+                if let Ok(new_position) = small_window.outer_position() {
+                  println!("CONSOLE: 設定後の実際の位置: {:?}", new_position);
+                }
+                
                 let _ = small_window.show();
                 let _ = small_window.set_focus();
                 log::info!("同期フォールバック表示成功");
                 println!("CONSOLE: 同期フォールバック表示成功");
+                
+                // 表示後の最終確認
+                if let Ok(final_position) = small_window.outer_position() {
+                  println!("CONSOLE: 表示後の最終位置: {:?}", final_position);
+                }
               },
               Err(e) => {
                 println!("CONSOLE: 同期位置設定失敗: {}", e);
