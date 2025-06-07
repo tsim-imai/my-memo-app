@@ -2145,22 +2145,40 @@ pub fn run() {
       let app_handle = app.handle().clone();
       let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyV);
       
-      let _ = app.global_shortcut().on_shortcut(shortcut, move |_app_handle, _shortcut, _event| {
+      // Note: アクセシビリティ権限のチェックは後で手動で行う
+      
+      log::info!("グローバルホットキー登録試行: Cmd+Shift+V");
+      
+      match app.global_shortcut().on_shortcut(shortcut, move |_app_handle, _shortcut, _event| {
         log::info!("グローバルホットキーが押されました: Cmd+Shift+V");
         
         // マウス位置にスモールウィンドウを表示
         let app_handle_clone = app_handle.clone();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
           runtime.spawn(async move {
-            if let Err(e) = show_small_window_at_mouse(app_handle_clone.clone()).await {
-              log::error!("スモールウィンドウ表示エラー: {}", e);
+            // まずマウス位置での表示を試行
+            match show_small_window_at_mouse(app_handle_clone.clone()).await {
+              Ok(_) => log::info!("マウス位置でのスモールウィンドウ表示成功"),
+              Err(e) => {
+                log::error!("マウス位置でのスモールウィンドウ表示エラー: {}", e);
+                // フォールバック: 通常の表示方法
+                if let Some(small_window) = app_handle_clone.get_webview_window("small") {
+                  let _ = small_window.center();
+                  let _ = small_window.show();
+                  let _ = small_window.set_focus();
+                  log::info!("フォールバック表示成功");
+                }
+              }
             }
             
             // フロントエンドにホットキーイベントを通知
             let _ = app_handle_clone.emit("hotkey-triggered", "cmd+shift+v");
           });
         }
-      });
+      }) {
+        Ok(_) => log::info!("グローバルホットキー登録成功: Cmd+Shift+V"),
+        Err(e) => log::error!("グローバルホットキー登録失敗: {}", e),
+      }
       
       // システムトレイメニューを設定
       use tauri::{
