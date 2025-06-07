@@ -35,6 +35,9 @@
             <span class="tab-icon">⚙️</span>
             設定
           </button>
+          <button id="help-btn" class="tab-button help-button" title="キーボードショートカット (?)">
+            <span class="tab-icon">❓</span>
+          </button>
         </nav>
 
         <!-- タブコンテンツ -->
@@ -45,6 +48,11 @@
               <h2>📄 クリップボード履歴</h2>
               <div class="panel-actions">
                 <input type="text" id="history-search" placeholder="履歴を検索..." class="search-input">
+                <select id="history-sort" class="sort-select">
+                  <option value="recent">🕐 最新順</option>
+                  <option value="frequency">🔥 使用頻度順</option>
+                  <option value="alphabetical">🔤 アルファベット順</option>
+                </select>
                 <button id="clear-history-btn" class="action-btn danger">
                   <span>🗑️</span> クリア
                 </button>
@@ -62,6 +70,12 @@
               <h2>⭐ ブックマーク</h2>
               <div class="panel-actions">
                 <input type="text" id="bookmark-search" placeholder="ブックマークを検索..." class="search-input">
+                <select id="bookmark-sort" class="sort-select">
+                  <option value="recent">🕐 最新順</option>
+                  <option value="frequency">🔥 使用頻度順</option>
+                  <option value="name">📝 名前順</option>
+                  <option value="alphabetical">🔤 内容順</option>
+                </select>
                 <button id="add-bookmark-btn" class="action-btn primary">
                   <span>➕</span> 追加
                 </button>
@@ -104,6 +118,13 @@
                   <label for="hotkey-display">ホットキー:</label>
                   <input type="text" id="hotkey-display" value="Cmd+Shift+V" readonly>
                 </div>
+                <div class="setting-item">
+                  <label for="dark-mode-toggle">ダークモード:</label>
+                  <button id="dark-mode-toggle" class="toggle-btn">
+                    <span class="toggle-icon">🌙</span>
+                    <span class="toggle-text">ダーク</span>
+                  </button>
+                </div>
               </div>
               <div class="setting-group">
                 <h3>🔐 権限</h3>
@@ -119,6 +140,23 @@
                 <h3>📊 統計</h3>
                 <div id="stats-display" class="stats-grid">
                   <!-- 統計情報がここに表示される -->
+                </div>
+              </div>
+              <div class="setting-group">
+                <h3>🔧 システム最適化</h3>
+                <div class="optimization-controls">
+                  <button id="optimize-memory-btn" class="action-btn primary">
+                    <span>🟢</span> メモリ最適化
+                  </button>
+                  <button id="view-logs-btn" class="action-btn">
+                    <span>📄</span> ログ表示
+                  </button>
+                  <button id="clear-logs-btn" class="action-btn danger">
+                    <span>🗜️</span> ログクリア
+                  </button>
+                  <button id="diagnostics-btn" class="action-btn">
+                    <span>🔍</span> 診断情報
+                  </button>
                 </div>
               </div>
             </div>
@@ -151,6 +189,155 @@
         <div class="modal-footer">
           <button id="bookmark-cancel-btn" class="action-btn">キャンセル</button>
           <button id="bookmark-save-btn" class="action-btn primary">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ヘルプモーダル: キーボードショートカット -->
+    <div id="help-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>⌨️ キーボードショートカット</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="shortcuts-grid">
+            <div class="shortcut-section">
+              <h4>🔄 タブ切り替え</h4>
+              <div class="shortcut-item">
+                <kbd>Cmd</kbd> + <kbd>1</kbd> <span>履歴タブ</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>Cmd</kbd> + <kbd>2</kbd> <span>ブックマークタブ</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>Cmd</kbd> + <kbd>3</kbd> <span>IP履歴タブ</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>Cmd</kbd> + <kbd>4</kbd> <span>設定タブ</span>
+              </div>
+            </div>
+            
+            <div class="shortcut-section">
+              <h4>🔍 検索・操作</h4>
+              <div class="shortcut-item">
+                <kbd>Cmd</kbd> + <kbd>F</kbd> <span>検索フィールドにフォーカス</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>Cmd</kbd> + <kbd>N</kbd> <span>新規ブックマーク（ブックマークタブ）</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>Esc</kbd> <span>検索フィールドからフォーカス解除</span>
+              </div>
+            </div>
+            
+            <div class="shortcut-section">
+              <h4>🧭 ナビゲーション</h4>
+              <div class="shortcut-item">
+                <kbd>↑</kbd> <kbd>↓</kbd> <span>アイテム選択</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>Enter</kbd> / <kbd>Space</kbd> <span>選択アイテムをコピー</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>Cmd</kbd> + <kbd>C</kbd> <span>選択アイテムをコピー</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>Delete</kbd> <span>選択アイテムを削除</span>
+              </div>
+            </div>
+            
+            <div class="shortcut-section">
+              <h4>💾 モーダル操作</h4>
+              <div class="shortcut-item">
+                <kbd>Cmd</kbd> + <kbd>Enter</kbd> <span>ブックマーク保存</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>Esc</kbd> <span>モーダルを閉じる</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>Tab</kbd> <span>フィールド間移動</span>
+              </div>
+            </div>
+            
+            <div class="shortcut-section">
+              <h4>🌍 グローバル</h4>
+              <div class="shortcut-item">
+                <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>V</kbd> <span>アプリを表示</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>?</kbd> <span>このヘルプを表示</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="help-close-btn" class="action-btn primary">閉じる</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- プレビューモーダル -->
+    <div id="preview-modal" class="modal">
+      <div class="modal-content preview-modal-content">
+        <div class="modal-header">
+          <h3 id="preview-title">📄 プレビュー</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="preview-toolbar">
+            <div class="preview-info">
+              <span id="preview-type" class="preview-badge">text</span>
+              <span id="preview-size" class="preview-size">0 KB</span>
+              <span id="preview-date" class="preview-date">-</span>
+            </div>
+            <div class="preview-actions">
+              <button id="preview-copy-btn" class="action-btn primary">
+                📋 コピー
+              </button>
+              <button id="preview-bookmark-btn" class="action-btn">
+                ⭐ ブックマーク
+              </button>
+            </div>
+          </div>
+          <div class="preview-content-container">
+            <div id="preview-content" class="preview-content"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="preview-close-btn" class="action-btn">閉じる</button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- ログモーダル -->
+    <div id="logs-modal" class="modal">
+      <div class="modal-content logs-modal-content">
+        <div class="modal-header">
+          <h3>📄 アプリケーションログ</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="logs-content" class="logs-content"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="logs-close-btn" class="action-btn primary">閉じる</button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 診断情報モーダル -->
+    <div id="diagnostics-modal" class="modal">
+      <div class="modal-content diagnostics-modal-content">
+        <div class="modal-header">
+          <h3>🔍 システム診断</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="diagnostics-content" class="diagnostics-content"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="diagnostics-close-btn" class="action-btn primary">閉じる</button>
         </div>
       </div>
     </div>
@@ -309,6 +496,23 @@
         border-color: #007bff;
       }
 
+      /* ソートセレクト */
+      .sort-select {
+        padding: 10px 15px;
+        border: 2px solid #e9ecef;
+        border-radius: 8px;
+        font-size: 0.9em;
+        background: white;
+        outline: none;
+        cursor: pointer;
+        transition: border-color 0.3s ease;
+        min-width: 150px;
+      }
+
+      .sort-select:focus {
+        border-color: #007bff;
+      }
+
       /* ボタン */
       .action-btn {
         padding: 10px 20px;
@@ -368,6 +572,13 @@
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
       }
 
+      .item-card.selected {
+        border: 2px solid #007bff;
+        background: linear-gradient(145deg, #f0f8ff, #e3f2fd);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(0, 123, 255, 0.3);
+      }
+
       .item-header {
         display: flex;
         justify-content: space-between;
@@ -382,6 +593,24 @@
 
       .item-meta {
         font-size: 0.8em;
+        color: #6c757d;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .access-count {
+        background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+        color: white;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.75em;
+        font-weight: 600;
+        align-self: flex-start;
+      }
+
+      .access-count:not(:contains("🔥")) {
+        background: #e9ecef;
         color: #6c757d;
       }
 
@@ -622,6 +851,547 @@
 
       .item-list::-webkit-scrollbar-thumb:hover {
         background: #a8a8a8;
+      }
+
+      /* ヘルプボタンスタイル */
+      .help-button {
+        max-width: 60px;
+        flex: 0 0 60px;
+        background: rgba(0, 123, 255, 0.1) !important;
+        color: #007bff !important;
+      }
+
+      .help-button:hover {
+        background: rgba(0, 123, 255, 0.2) !important;
+      }
+
+      /* キーボードショートカット */
+      .shortcuts-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+      }
+
+      .shortcut-section h4 {
+        margin-bottom: 12px;
+        color: #333;
+        font-size: 1.1em;
+        border-bottom: 2px solid #e9ecef;
+        padding-bottom: 5px;
+      }
+
+      .shortcut-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid #f1f1f1;
+      }
+
+      .shortcut-item:last-child {
+        border-bottom: none;
+      }
+
+      .shortcut-item kbd {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-family: 'SF Mono', Monaco, monospace;
+        font-size: 0.85em;
+        color: #495057;
+        margin: 0 2px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      }
+
+      .shortcut-item span {
+        color: #6c757d;
+        font-size: 0.9em;
+        margin-left: 10px;
+        flex: 1;
+      }
+
+      /* タグスタイル */
+      .tag {
+        background: linear-gradient(45deg, #007bff, #0056b3);
+        color: white;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.75em;
+        margin: 2px;
+        display: inline-block;
+        font-weight: 500;
+      }
+
+      .item-tags {
+        margin-top: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+
+      /* 空の状態 */
+      .empty-state {
+        text-align: center;
+        color: #6c757d;
+        font-size: 1.1em;
+        padding: 40px 20px;
+        background: rgba(108, 117, 125, 0.1);
+        border-radius: 8px;
+        margin: 20px 0;
+      }
+
+      .error {
+        text-align: center;
+        color: #dc3545;
+        font-size: 1.1em;
+        padding: 40px 20px;
+        background: rgba(220, 53, 69, 0.1);
+        border-radius: 8px;
+        margin: 20px 0;
+      }
+
+      /* プレビューモーダル */
+      .preview-modal-content {
+        width: 95%;
+        max-width: 800px;
+        max-height: 90vh;
+      }
+
+      .preview-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .preview-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .preview-badge {
+        background: linear-gradient(45deg, #28a745, #20c997);
+        color: white;
+        padding: 4px 12px;
+        border-radius: 16px;
+        font-size: 0.8em;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      .preview-size {
+        background: #e9ecef;
+        color: #495057;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.85em;
+        font-family: 'SF Mono', Monaco, monospace;
+      }
+
+      .preview-date {
+        color: #6c757d;
+        font-size: 0.85em;
+      }
+
+      .preview-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .preview-content-container {
+        background: #f8f9fa;
+        border-radius: 8px;
+        max-height: 500px;
+        overflow: hidden;
+        border: 1px solid #e9ecef;
+      }
+
+      .preview-content {
+        padding: 20px;
+        font-family: 'SF Mono', Monaco, monospace;
+        font-size: 0.9em;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 460px;
+        overflow-y: auto;
+        background: white;
+      }
+
+      /* プレビューコンテンツタイプ別スタイル */
+      .preview-content.json {
+        color: #495057;
+      }
+
+      .preview-content.url {
+        color: #007bff;
+      }
+
+      .preview-content.code {
+        background: #2d3748;
+        color: #e2e8f0;
+      }
+
+      .preview-content.large-text {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 1em;
+        line-height: 1.5;
+      }
+
+      /* プレビュー内の検索ハイライト */
+      .preview-highlight {
+        background: #fff3cd;
+        padding: 1px 3px;
+        border-radius: 2px;
+        font-weight: 600;
+      }
+
+      /* ダークモード切り替えボタン */
+      .toggle-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        border: 2px solid #e9ecef;
+        border-radius: 25px;
+        background: white;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        font-size: 0.9em;
+        font-weight: 500;
+      }
+
+      .toggle-btn:hover {
+        background: #f8f9fa;
+        transform: translateY(-1px);
+      }
+
+      .toggle-btn.active {
+        background: #2d3748;
+        color: white;
+        border-color: #4a5568;
+      }
+
+      .toggle-icon {
+        font-size: 1.2em;
+        transition: transform 0.3s ease;
+      }
+
+      .toggle-btn.active .toggle-icon {
+        transform: rotate(20deg);
+      }
+
+      /* ダークモードテーマ */
+      body.dark-mode {
+        background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+        color: #f7fafc;
+      }
+
+      .dark-mode .container {
+        background: rgba(45, 55, 72, 0.95);
+        color: #f7fafc;
+      }
+
+      .dark-mode .header {
+        background: linear-gradient(90deg, #4a5568 0%, #2d3748 100%);
+      }
+
+      .dark-mode .tab-nav {
+        background: #2d3748;
+        border-bottom-color: #4a5568;
+      }
+
+      .dark-mode .tab-button {
+        color: #a0aec0;
+      }
+
+      .dark-mode .tab-button:hover {
+        background: rgba(74, 85, 104, 0.3);
+        color: #e2e8f0;
+      }
+
+      .dark-mode .tab-button.active {
+        background: #4a5568;
+        color: #90cdf4;
+        border-bottom-color: #90cdf4;
+      }
+
+      .dark-mode .panel-header h2 {
+        color: #f7fafc;
+      }
+
+      .dark-mode .search-input,
+      .dark-mode .sort-select {
+        background: #4a5568;
+        border-color: #718096;
+        color: #f7fafc;
+      }
+
+      .dark-mode .search-input::placeholder {
+        color: #a0aec0;
+      }
+
+      .dark-mode .search-input:focus,
+      .dark-mode .sort-select:focus {
+        border-color: #90cdf4;
+      }
+
+      .dark-mode .item-list {
+        background: #2d3748;
+      }
+
+      .dark-mode .item-card {
+        background: #4a5568;
+        color: #f7fafc;
+        border: 1px solid #718096;
+      }
+
+      .dark-mode .item-card:hover {
+        background: #718096;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      }
+
+      .dark-mode .item-card.selected {
+        border-color: #90cdf4;
+        background: linear-gradient(145deg, #4a5568, #2d3748);
+        box-shadow: 0 6px 20px rgba(144, 205, 244, 0.3);
+      }
+
+      .dark-mode .item-content {
+        background: #2d3748;
+        color: #e2e8f0;
+      }
+
+      .dark-mode .item-meta {
+        color: #a0aec0;
+      }
+
+      .dark-mode .setting-group {
+        background: #2d3748;
+        color: #f7fafc;
+      }
+
+      .dark-mode .setting-group h3 {
+        color: #f7fafc;
+        border-bottom-color: #4a5568;
+      }
+
+      .dark-mode .setting-item label {
+        color: #e2e8f0;
+      }
+
+      .dark-mode .setting-item input {
+        background: #4a5568;
+        border-color: #718096;
+        color: #f7fafc;
+      }
+
+      .dark-mode .stat-item {
+        background: #4a5568;
+        color: #f7fafc;
+      }
+
+      .dark-mode .modal-content {
+        background: #2d3748;
+        color: #f7fafc;
+      }
+
+      .dark-mode .modal-header,
+      .dark-mode .modal-footer {
+        background: #4a5568;
+        border-color: #718096;
+      }
+
+      .dark-mode .form-group input,
+      .dark-mode .form-group textarea {
+        background: #4a5568;
+        border-color: #718096;
+        color: #f7fafc;
+      }
+
+      .dark-mode .form-group input::placeholder,
+      .dark-mode .form-group textarea::placeholder {
+        color: #a0aec0;
+      }
+
+      .dark-mode .preview-content {
+        background: #2d3748;
+        color: #e2e8f0;
+      }
+
+      .dark-mode .preview-toolbar {
+        background: #4a5568;
+      }
+
+      .dark-mode .preview-content-container {
+        background: #2d3748;
+        border-color: #4a5568;
+      }
+
+      .dark-mode .shortcut-section h4 {
+        color: #f7fafc;
+        border-bottom-color: #4a5568;
+      }
+
+      .dark-mode .shortcut-item {
+        border-bottom-color: #4a5568;
+      }
+
+      .dark-mode .shortcut-item span {
+        color: #a0aec0;
+      }
+
+      .dark-mode .shortcut-item kbd {
+        background: #4a5568;
+        border-color: #718096;
+        color: #e2e8f0;
+      }
+
+      .dark-mode .empty-state {
+        background: rgba(74, 85, 104, 0.3);
+        color: #a0aec0;
+      }
+
+      .dark-mode .error {
+        background: rgba(245, 101, 101, 0.2);
+        color: #feb2b2;
+      }
+      
+      /* Phase 7: 最適化・ログ機能のスタイル */
+      .optimization-controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px;
+        margin-top: 10px;
+      }
+      
+      .logs-modal-content,
+      .diagnostics-modal-content {
+        width: 95%;
+        max-width: 900px;
+        max-height: 90vh;
+      }
+      
+      .logs-content {
+        background: #2d3748;
+        color: #e2e8f0;
+        font-family: 'SF Mono', Monaco, monospace;
+        font-size: 0.85em;
+        line-height: 1.4;
+        padding: 15px;
+        border-radius: 8px;
+        max-height: 500px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      
+      .log-line {
+        margin-bottom: 2px;
+        padding: 2px 0;
+      }
+      
+      .log-line:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+      
+      .diagnostics-content {
+        max-height: 500px;
+        overflow-y: auto;
+      }
+      
+      .diagnostics-section {
+        margin-bottom: 20px;
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 8px;
+      }
+      
+      .diagnostics-section h4 {
+        margin-bottom: 12px;
+        color: #333;
+        font-size: 1.1em;
+        border-bottom: 2px solid #e9ecef;
+        padding-bottom: 5px;
+      }
+      
+      .diagnostic-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid #e9ecef;
+      }
+      
+      .diagnostic-item:last-child {
+        border-bottom: none;
+      }
+      
+      .diagnostic-item span:first-child {
+        font-weight: 500;
+        color: #495057;
+      }
+      
+      .diagnostic-item span:last-child {
+        font-family: 'SF Mono', Monaco, monospace;
+        color: #6c757d;
+      }
+      
+      .health-ok {
+        color: #28a745 !important;
+        font-weight: 600;
+      }
+      
+      .health-normal {
+        color: #28a745 !important;
+        font-weight: 600;
+      }
+      
+      .health-high {
+        color: #ffc107 !important;
+        font-weight: 600;
+      }
+      
+      .health-error {
+        color: #dc3545 !important;
+        font-weight: 600;
+      }
+      
+      /* ダークモード対応 */
+      .dark-mode .logs-content {
+        background: #1a202c;
+        color: #f7fafc;
+      }
+      
+      .dark-mode .diagnostics-section {
+        background: #2d3748;
+        color: #f7fafc;
+      }
+      
+      .dark-mode .diagnostics-section h4 {
+        color: #f7fafc;
+        border-bottom-color: #4a5568;
+      }
+      
+      .dark-mode .diagnostic-item {
+        border-bottom-color: #4a5568;
+      }
+      
+      .dark-mode .diagnostic-item span:first-child {
+        color: #e2e8f0;
+      }
+      
+      .dark-mode .diagnostic-item span:last-child {
+        color: #a0aec0;
       }
 
       /* レスポンシブ */

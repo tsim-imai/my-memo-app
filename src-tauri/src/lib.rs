@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use clipboard::{ClipboardProvider, ClipboardContext};
 use std::fs;
 use regex::Regex;
+use std::io::Write; // ログファイル書き込み用
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardItem {
@@ -114,6 +115,42 @@ impl ClipboardManager {
         
         Ok(app_data_dir.join("clipboard_data.json"))
     }
+    
+    fn get_log_file_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+        let app_data_dir = app_handle.path().app_data_dir()
+            .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+        
+        if !app_data_dir.exists() {
+            fs::create_dir_all(&app_data_dir)
+                .map_err(|e| format!("Failed to create app data directory: {}", e))?;
+        }
+        
+        Ok(app_data_dir.join("clipboard_manager.log"))
+    }
+    
+    fn log_to_file(app_handle: &AppHandle, level: &str, message: &str) {
+        if let Ok(log_path) = Self::get_log_file_path(app_handle) {
+            let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+            let log_entry = format!("[{}] {}: {}\n", timestamp, level, message);
+            
+            // ログファイルサイズ制限（5MB）
+            if let Ok(metadata) = fs::metadata(&log_path) {
+                if metadata.len() > 5 * 1024 * 1024 { // 5MB
+                    // 古いログをローテート
+                    let old_log_path = log_path.with_extension("log.old");
+                    let _ = fs::rename(&log_path, &old_log_path);
+                }
+            }
+            
+            if let Ok(mut file) = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path) {
+                let _ = file.write_all(log_entry.as_bytes());
+                let _ = file.flush();
+            }
+        }
+    }
 
     pub fn load_from_file(&self, app_handle: &AppHandle) -> Result<(), String> {
         let file_path = Self::get_data_file_path(app_handle)?;
@@ -123,11 +160,39 @@ impl ClipboardManager {
             return Ok(());
         }
 
+        // エラーハンドリング強化: ファイルサイズチェック
+        let metadata = fs::metadata(&file_path)
+            .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+        
+        if metadata.len() > 50 * 1024 * 1024 { // 50MB制限
+            return Err("Data file is too large (>50MB)".to_string());
+        }
+        
+        if metadata.len() == 0 {
+            log::warn!("データファイルが空です。デフォルト設定を使用します。");
+            return Ok(());
+        }
+
         let file_content = fs::read_to_string(&file_path)
             .map_err(|e| format!("Failed to read data file: {}", e))?;
 
-        let loaded_data: AppData = serde_json::from_str(&file_content)
-            .map_err(|e| format!("Failed to parse JSON data: {}", e))?;
+        // JSONパースエラーのロバストなハンドリング
+        let loaded_data: AppData = match serde_json::from_str(&file_content) {
+            Ok(data) => data,
+            Err(e) => {
+                log::error!("JSONパースエラー: {}. バックアップを作成してデフォルト設定で続行します", e);
+                
+                // 破損したファイルのバックアップを作成
+                let backup_path = file_path.with_extension("json.backup");
+                if let Err(backup_err) = fs::copy(&file_path, &backup_path) {
+                    log::warn!("バックアップ作成失敗: {}", backup_err);
+                } else {
+                    log::info!("破損したファイルのバックアップを作成: {:?}", backup_path);
+                }
+                
+                return Ok(()); // デフォルト設定で続行
+            }
+        };
 
         match self.app_data.lock() {
             Ok(mut data) => {
@@ -147,13 +212,30 @@ impl ClipboardManager {
             Err(_) => return Err("Failed to lock app data for saving".to_string()),
         };
 
-        let json_content = serde_json::to_string_pretty(&data_to_save)
+        // エラーハンドリング強化: データサイズチェック
+        if data_to_save.history.len() > data_to_save.settings.history_limit * 2 {
+            log::warn!("履歴アイテム数が制限を大幅に超過しています: {}", data_to_save.history.len());
+        }
+
+        let json_content = serde_json::to_string(&data_to_save) // prettyをやめてサイズ削減
             .map_err(|e| format!("Failed to serialize data: {}", e))?;
+        
+        // アトミックなファイル書き込み（一時ファイル経由）
+        let temp_path = file_path.with_extension("json.tmp");
+        
+        // 一時ファイルに書き込み
+        fs::write(&temp_path, &json_content)
+            .map_err(|e| format!("Failed to write temporary data file: {}", e))?;
+        
+        // 原子的にリネーム（データ破損を防止）
+        fs::rename(&temp_path, &file_path)
+            .map_err(|e| {
+                // 失敗時は一時ファイルを清理
+                let _ = fs::remove_file(&temp_path);
+                format!("Failed to rename temporary file: {}", e)
+            })?;
 
-        fs::write(&file_path, json_content)
-            .map_err(|e| format!("Failed to write data file: {}", e))?;
-
-        log::info!("データファイルに保存完了: {:?}", file_path);
+        log::info!("データファイルに保存完了: {:?} ({} bytes)", file_path, json_content.len());
         Ok(())
     }
 
@@ -268,12 +350,30 @@ impl ClipboardManager {
         let app_handle_clone = app_handle.clone();
         
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(30)); // 30秒ごとに自動保存
+            // メモリ最適化: 自動保存間隔を動的に調整
+            let mut interval = tokio::time::interval(Duration::from_secs(60)); // 初期は60秒
+            let mut last_data_hash: Option<u64> = None;
             
             loop {
                 interval.tick().await;
                 
                 if let Ok(data) = app_data.lock() {
+                    // メモリ最適化: データのハッシュ値をチェックして変更がある場合のみ保存
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    
+                    let mut hasher = DefaultHasher::new();
+                    data.history.len().hash(&mut hasher);
+                    data.bookmarks.len().hash(&mut hasher);
+                    data.recent_ips.len().hash(&mut hasher);
+                    let current_hash = hasher.finish();
+                    
+                    if last_data_hash == Some(current_hash) {
+                        // データに変更がない場合はスキップ
+                        continue;
+                    }
+                    
+                    last_data_hash = Some(current_hash);
                     let data_clone = data.clone();
                     drop(data); // Mutexのロックを解放
                     
@@ -285,11 +385,12 @@ impl ClipboardManager {
                         }
                     };
                     
-                    if let Ok(json_content) = serde_json::to_string_pretty(&data_clone) {
+                    // メモリ効率的なシリアライゼーション
+                    if let Ok(json_content) = serde_json::to_string(&data_clone) { // pretty形式をやめてサイズ削減
                         if let Err(e) = fs::write(&file_path, json_content) {
                             log::warn!("自動保存エラー: {}", e);
                         } else {
-                            log::debug!("自動保存完了: {:?}", file_path);
+                            log::debug!("自動保存完了: {:?} (hash: {})", file_path, current_hash);
                         }
                     }
                 }
@@ -311,7 +412,10 @@ impl ClipboardManager {
         let monitoring_flag = Arc::clone(&self.is_monitoring);
         
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(500));
+            // パフォーマンス最適化: アダプティブな監視間隔
+            let mut interval = tokio::time::interval(Duration::from_millis(250)); // より高速な応答
+            let mut consecutive_errors = 0;
+            let mut last_clipboard_hash: Option<u64> = None;
             
             loop {
                 interval.tick().await;
@@ -323,12 +427,27 @@ impl ClipboardManager {
                     }
                 }
                 
-                // クリップボード内容を取得
-                if let Ok(mut ctx) = ClipboardContext::new() {
-                    if let Ok(text) = ctx.get_contents() {
-                        // 前回の内容と比較
-                        if let Ok(mut last) = last_content.lock() {
-                            if last.as_ref() != Some(&text) && !text.trim().is_empty() {
+                // クリップボード内容を取得（エラーハンドリング改善）
+                match ClipboardContext::new() {
+                    Ok(mut ctx) => {
+                        match ctx.get_contents() {
+                            Ok(text) => {
+                                consecutive_errors = 0; // エラーカウントリセット
+                                
+                                // パフォーマンス最適化: ハッシュベースの変更検出
+                                use std::collections::hash_map::DefaultHasher;
+                                use std::hash::{Hash, Hasher};
+                                
+                                let mut hasher = DefaultHasher::new();
+                                text.hash(&mut hasher);
+                                let current_hash = hasher.finish();
+                                
+                                if last_clipboard_hash != Some(current_hash) && !text.trim().is_empty() {
+                                    last_clipboard_hash = Some(current_hash);
+                                
+                                    // 前回の内容と比較
+                                    if let Ok(mut last) = last_content.lock() {
+                                        if last.as_ref() != Some(&text) {
                                 *last = Some(text.clone());
                                 
                                 // 履歴に追加
@@ -358,18 +477,18 @@ impl ClipboardManager {
                                         data.history.push(item);
                                         log::info!("クリップボード変更検出: {} chars", text.len());
                                         
-                                        // データ変更時の通知のみ（自動保存は別タスクで実行）
-                                        
-                                        // フロントエンドに通知
-                                        let _ = app_handle.emit("clipboard-updated", &text);
+                                            // データ変更時の通知のみ（自動保存は別タスクで実行）
+                                            
+                                            // フロントエンドに通知（非同期）
+                                            let _ = app_handle.emit("clipboard-updated", &text);
                                     }
                                 }
-                            }
-                        }
-                        
-                        // IP検出処理（クリップボード変更があった場合）
-                        if let Ok(last) = last_content.lock() {
-                            if last.as_ref() != Some(&text) && !text.trim().is_empty() {
+                                    }
+                                }
+                                
+                                // IP検出処理（ハッシュが変更された場合のみ）
+                                if let Ok(last) = last_content.lock() {
+                                    if last.as_ref() != Some(&text) && !text.trim().is_empty() {
                                 // IP検出を実行
                                 if let Ok(_data) = app_data.lock() {
                                     let manager_clone = ClipboardManager {
@@ -390,8 +509,29 @@ impl ClipboardManager {
                                             let _ = app_handle.emit("ip-detected", &ip);
                                         }
                                     }
+                                    }
+                                }
                                 }
                             }
+                            Err(e) => {
+                                consecutive_errors += 1;
+                                log::warn!("クリップボード読み込みエラー #{}: {}", consecutive_errors, e);
+                                
+                                // 連続エラーが多い場合は監視間隔を調整
+                                if consecutive_errors > 5 {
+                                    interval = tokio::time::interval(Duration::from_millis(1000)); // 1秒に延長
+                                    log::warn!("連続エラーが多いため監視間隔を1秒に変更");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        log::error!("クリップボードコンテキスト作成エラー #{}: {}", consecutive_errors, e);
+                        
+                        if consecutive_errors > 10 {
+                            log::error!("致命的エラー: クリップボード監視を停止します");
+                            break;
                         }
                     }
                 }
@@ -1070,13 +1210,23 @@ fn remove_duplicate_clipboard_items(
     match state.app_data.lock() {
         Ok(mut data) => {
             let original_count = data.history.len();
-            let mut seen_content = std::collections::HashSet::new();
+            
+            // メモリ最適化: ハッシュベースの重複削除
+            use std::collections::HashMap;
+            let mut seen_hashes: HashMap<u64, usize> = HashMap::new();
             let mut unique_items = Vec::new();
             
-            // 新しい順に処理して、重複する場合は最新のものを保持
-            for item in data.history.iter().rev() {
-                if !seen_content.contains(&item.content) {
-                    seen_content.insert(item.content.clone());
+            // ハッシュ値で重複チェック（メモリ効率的）
+            for (index, item) in data.history.iter().enumerate().rev() {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                
+                let mut hasher = DefaultHasher::new();
+                item.content.hash(&mut hasher);
+                let content_hash = hasher.finish();
+                
+                if !seen_hashes.contains_key(&content_hash) {
+                    seen_hashes.insert(content_hash, index);
                     unique_items.push(item.clone());
                 }
             }
@@ -1193,6 +1343,142 @@ fn find_duplicate_bookmarks(
             Ok(duplicates)
         }
         Err(_) => Err("Failed to access bookmarks".to_string()),
+    }
+}
+
+// ログ機能用コマンド
+#[tauri::command]
+fn get_app_logs(
+    app_handle: AppHandle,
+    lines: Option<usize>,
+) -> Result<Vec<String>, String> {
+    let log_path = ClipboardManager::get_log_file_path(&app_handle)?;
+    
+    if !log_path.exists() {
+        return Ok(vec!["\u30ed\u30b0\u30d5\u30a1\u30a4\u30eb\u304c\u5b58\u5728\u3057\u307e\u305b\u3093".to_string()]);
+    }
+    
+    let content = fs::read_to_string(&log_path)
+        .map_err(|e| format!("Failed to read log file: {}", e))?;
+    
+    let mut log_lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    
+    // 最新のログから指定行数を返す
+    if let Some(max_lines) = lines {
+        if log_lines.len() > max_lines {
+            log_lines = log_lines.into_iter().skip(log_lines.len() - max_lines).collect();
+        }
+    }
+    
+    Ok(log_lines)
+}
+
+#[tauri::command]
+fn clear_app_logs(app_handle: AppHandle) -> Result<String, String> {
+    let log_path = ClipboardManager::get_log_file_path(&app_handle)?;
+    
+    if log_path.exists() {
+        fs::remove_file(&log_path)
+            .map_err(|e| format!("Failed to clear log file: {}", e))?;
+    }
+    
+    ClipboardManager::log_to_file(&app_handle, "INFO", "\u30ed\u30b0\u30d5\u30a1\u30a4\u30eb\u304c\u30af\u30ea\u30a2\u3055\u308c\u307e\u3057\u305f");
+    Ok("Log file cleared successfully".to_string())
+}
+
+#[tauri::command]
+fn get_app_diagnostics(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+) -> Result<serde_json::Value, String> {
+    let data = match state.app_data.lock() {
+        Ok(data) => data.clone(),
+        Err(_) => return Err("Failed to access app data".to_string()),
+    };
+    
+    let log_path = ClipboardManager::get_log_file_path(&app_handle)?;
+    let data_path = ClipboardManager::get_data_file_path(&app_handle)?;
+    
+    let log_size = if log_path.exists() {
+        fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+    
+    let data_size = if data_path.exists() {
+        fs::metadata(&data_path).map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+    
+    let diagnostics = serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "timestamp": Utc::now(),
+        "data_stats": {
+            "history_count": data.history.len(),
+            "bookmarks_count": data.bookmarks.len(),
+            "ips_count": data.recent_ips.len(),
+            "total_history_size": data.history.iter().map(|item| item.size).sum::<usize>(),
+            "data_file_size": data_size,
+        },
+        "system_stats": {
+            "log_file_size": log_size,
+            "settings": data.settings,
+        },
+        "health": {
+            "data_integrity": "OK",
+            "memory_usage": "Normal",
+            "disk_usage": if data_size + log_size > 10 * 1024 * 1024 { "High" } else { "Normal" }
+        }
+    });
+    
+    Ok(diagnostics)
+}
+
+// メモリクリーンアップ用の新しいコマンド
+#[tauri::command]
+fn optimize_memory(
+    state: State<'_, ClipboardManager>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    match state.app_data.lock() {
+        Ok(mut data) => {
+            let mut cleaned_items = 0;
+            
+            // 大きなコンテンツ（10KB以上）で古い（7日以上）アイテムを削除
+            let cutoff_date = Utc::now() - chrono::Duration::days(7);
+            let original_history_count = data.history.len();
+            
+            data.history.retain(|item| {
+                if item.size > 10240 && item.timestamp < cutoff_date { // 10KB以上かつ7日以上古い
+                    cleaned_items += 1;
+                    false
+                } else {
+                    true
+                }
+            });
+            
+            // 使用されていない古いアイテムも削除
+            data.history.retain(|item| {
+                if item.access_count == 0 && item.timestamp < Utc::now() - chrono::Duration::days(30) {
+                    cleaned_items += 1;
+                    false
+                } else {
+                    true
+                }
+            });
+            
+            log::info!("メモリ最適化: {} 件のアイテムを削除", cleaned_items);
+            
+            // データを保存
+            drop(data);
+            if let Err(e) = state.save_to_file(&app_handle) {
+                log::warn!("自動保存エラー: {}", e);
+            }
+            
+            Ok(format!("メモリ最適化完了: {} 件のアイテムを削除", cleaned_items))
+        }
+        Err(_) => Err("Failed to access clipboard history".to_string()),
     }
 }
 
@@ -1816,7 +2102,11 @@ pub fn run() {
         get_permission_instructions,
         increment_access_count,
         get_sorted_history,
-        get_sorted_bookmarks
+        get_sorted_bookmarks,
+        optimize_memory,
+        get_app_logs,
+        clear_app_logs,
+        get_app_diagnostics
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -17,12 +17,14 @@ const elements = {
   // 履歴
   historyList: document.getElementById('history-list'),
   historySearch: document.getElementById('history-search'),
+  historySort: document.getElementById('history-sort'),
   clearHistoryBtn: document.getElementById('clear-history-btn'),
   removeDuplicatesBtn: document.getElementById('remove-duplicates-btn'),
   
   // ブックマーク
   bookmarksList: document.getElementById('bookmarks-list'),
   bookmarkSearch: document.getElementById('bookmark-search'),
+  bookmarkSort: document.getElementById('bookmark-sort'),
   addBookmarkBtn: document.getElementById('add-bookmark-btn'),
   
   // IP履歴
@@ -38,6 +40,18 @@ const elements = {
   checkPermissionsBtn: document.getElementById('check-permissions-btn'),
   statsDisplay: document.getElementById('stats-display'),
   
+  // Phase 7: 最適化・ログ
+  optimizeMemoryBtn: document.getElementById('optimize-memory-btn'),
+  viewLogsBtn: document.getElementById('view-logs-btn'),
+  clearLogsBtn: document.getElementById('clear-logs-btn'),
+  diagnosticsBtn: document.getElementById('diagnostics-btn'),
+  logsModal: document.getElementById('logs-modal'),
+  logsContent: document.getElementById('logs-content'),
+  logsCloseBtn: document.getElementById('logs-close-btn'),
+  diagnosticsModal: document.getElementById('diagnostics-modal'),
+  diagnosticsContent: document.getElementById('diagnostics-content'),
+  diagnosticsCloseBtn: document.getElementById('diagnostics-close-btn'),
+  
   // モーダル
   bookmarkModal: document.getElementById('bookmark-modal'),
   modalTitle: document.getElementById('modal-title'),
@@ -46,7 +60,26 @@ const elements = {
   bookmarkTags: document.getElementById('bookmark-tags'),
   bookmarkSaveBtn: document.getElementById('bookmark-save-btn'),
   bookmarkCancelBtn: document.getElementById('bookmark-cancel-btn'),
-  modalClose: document.querySelector('.modal-close')
+  modalClose: document.querySelector('.modal-close'),
+  
+  // ヘルプモーダル
+  helpModal: document.getElementById('help-modal'),
+  helpBtn: document.getElementById('help-btn'),
+  helpCloseBtn: document.getElementById('help-close-btn'),
+  
+  // プレビューモーダル
+  previewModal: document.getElementById('preview-modal'),
+  previewTitle: document.getElementById('preview-title'),
+  previewType: document.getElementById('preview-type'),
+  previewSize: document.getElementById('preview-size'),
+  previewDate: document.getElementById('preview-date'),
+  previewContent: document.getElementById('preview-content'),
+  previewCopyBtn: document.getElementById('preview-copy-btn'),
+  previewBookmarkBtn: document.getElementById('preview-bookmark-btn'),
+  previewCloseBtn: document.getElementById('preview-close-btn'),
+  
+  // ダークモード
+  darkModeToggle: document.getElementById('dark-mode-toggle')
 }
 
 // アプリ初期化
@@ -150,6 +183,15 @@ function setupSearchListeners() {
   elements.ipSearch.addEventListener('input', (e) => {
     debounceSearch('ips', e.target.value, 300)
   })
+  
+  // ソート変更
+  elements.historySort.addEventListener('change', (e) => {
+    loadHistory('', e.target.value)
+  })
+  
+  elements.bookmarkSort.addEventListener('change', (e) => {
+    loadBookmarks('', e.target.value)
+  })
 }
 
 // ボタンイベントの設定
@@ -175,6 +217,12 @@ function setupButtonEvents() {
   
   // 権限確認
   elements.checkPermissionsBtn.addEventListener('click', checkPermissions)
+  
+  // Phase 7: 最適化・ログ
+  elements.optimizeMemoryBtn.addEventListener('click', optimizeMemory)
+  elements.viewLogsBtn.addEventListener('click', viewLogs)
+  elements.clearLogsBtn.addEventListener('click', clearLogs)
+  elements.diagnosticsBtn.addEventListener('click', showDiagnostics)
 }
 
 // モーダルイベントの設定
@@ -183,18 +231,60 @@ function setupModalEvents() {
   elements.bookmarkCancelBtn.addEventListener('click', closeBookmarkModal)
   elements.modalClose.addEventListener('click', closeBookmarkModal)
   
+  // ヘルプモーダル
+  elements.helpBtn.addEventListener('click', openHelpModal)
+  elements.helpCloseBtn.addEventListener('click', closeHelpModal)
+  
+  // プレビューモーダル
+  elements.previewCloseBtn.addEventListener('click', closePreviewModal)
+  
+  // ログ・診断モーダル
+  elements.logsCloseBtn.addEventListener('click', closeLogsModal)
+  elements.diagnosticsCloseBtn.addEventListener('click', closeDiagnosticsModal)
+  
   // モーダル外クリックで閉じる
   elements.bookmarkModal.addEventListener('click', (e) => {
     if (e.target === elements.bookmarkModal) {
       closeBookmarkModal()
     }
   })
+  
+  elements.helpModal.addEventListener('click', (e) => {
+    if (e.target === elements.helpModal) {
+      closeHelpModal()
+    }
+  })
+  
+  elements.previewModal.addEventListener('click', (e) => {
+    if (e.target === elements.previewModal) {
+      closePreviewModal()
+    }
+  })
+  
+  elements.logsModal.addEventListener('click', (e) => {
+    if (e.target === elements.logsModal) {
+      closeLogsModal()
+    }
+  })
+  
+  elements.diagnosticsModal.addEventListener('click', (e) => {
+    if (e.target === elements.diagnosticsModal) {
+      closeDiagnosticsModal()
+    }
+  })
+  
+  // モーダルの閉じるボタン
+  elements.helpModal.querySelector('.modal-close').addEventListener('click', closeHelpModal)
+  elements.previewModal.querySelector('.modal-close').addEventListener('click', closePreviewModal)
+  elements.logsModal.querySelector('.modal-close').addEventListener('click', closeLogsModal)
+  elements.diagnosticsModal.querySelector('.modal-close').addEventListener('click', closeDiagnosticsModal)
 }
 
 // 設定イベントの設定
 function setupSettingsEvents() {
   elements.historyLimit.addEventListener('change', updateAppSettings)
   elements.ipLimit.addEventListener('change', updateAppSettings)
+  elements.darkModeToggle.addEventListener('click', toggleDarkMode)
 }
 
 // ステータス更新
@@ -249,11 +339,14 @@ async function loadAllData() {
 }
 
 // 履歴データ読み込み
-async function loadHistory(searchQuery = '') {
+async function loadHistory(searchQuery = '', sortBy = '') {
   try {
     let history
     if (searchQuery) {
       history = await invoke('search_clipboard_history', { query: searchQuery })
+    } else if (sortBy || elements.historySort.value !== 'recent') {
+      const sortMethod = sortBy || elements.historySort.value
+      history = await invoke('get_sorted_history', { sortBy: sortMethod })
     } else {
       history = await invoke('get_clipboard_history')
     }
@@ -291,14 +384,22 @@ function createHistoryCard(item, index) {
     ? item.content.substring(0, 200) + '...' 
     : item.content
   
+  const accessInfo = item.access_count > 0 
+    ? `<span class="access-count">🔥 ${item.access_count}回使用</span>`
+    : '<span class="access-count">未使用</span>'
+  
   card.innerHTML = `
     <div class="item-header">
       <div class="item-title">#${index + 1} ${item.content_type}</div>
-      <div class="item-meta">${new Date(item.timestamp).toLocaleString()}</div>
+      <div class="item-meta">
+        ${new Date(item.timestamp).toLocaleString()}
+        ${accessInfo}
+      </div>
     </div>
     <div class="item-content">${truncatedContent}</div>
     <div class="item-actions">
       <button class="item-btn" onclick="copyToClipboard('${item.id}')">📋 コピー</button>
+      <button class="item-btn" onclick="previewHistoryItem('${item.id}')">👁️ プレビュー</button>
       <button class="item-btn" onclick="addToBookmarks('${item.id}')">⭐ ブックマーク</button>
       <button class="item-btn danger" onclick="deleteHistoryItem('${item.id}')">🗑️ 削除</button>
     </div>
@@ -308,11 +409,14 @@ function createHistoryCard(item, index) {
 }
 
 // ブックマークデータ読み込み
-async function loadBookmarks(searchQuery = '') {
+async function loadBookmarks(searchQuery = '', sortBy = '') {
   try {
     let bookmarks
     if (searchQuery) {
       bookmarks = await invoke('search_bookmarks', { query: searchQuery })
+    } else if (sortBy || elements.bookmarkSort.value !== 'recent') {
+      const sortMethod = sortBy || elements.bookmarkSort.value
+      bookmarks = await invoke('get_sorted_bookmarks', { sortBy: sortMethod })
     } else {
       bookmarks = await invoke('get_bookmarks')
     }
@@ -348,15 +452,23 @@ function createBookmarkCard(bookmark) {
     ? bookmark.content.substring(0, 150) + '...'
     : bookmark.content
   
+  const accessInfo = bookmark.access_count > 0 
+    ? `<span class="access-count">🔥 ${bookmark.access_count}回使用</span>`
+    : '<span class="access-count">未使用</span>'
+  
   card.innerHTML = `
     <div class="item-header">
       <div class="item-title">⭐ ${bookmark.name}</div>
-      <div class="item-meta">${new Date(bookmark.timestamp).toLocaleString()}</div>
+      <div class="item-meta">
+        ${new Date(bookmark.timestamp).toLocaleString()}
+        ${accessInfo}
+      </div>
     </div>
     <div class="item-content">${truncatedContent}</div>
     ${tags ? `<div class="item-tags">${tags}</div>` : ''}
     <div class="item-actions">
       <button class="item-btn" onclick="copyBookmarkContent('${bookmark.id}')">📋 コピー</button>
+      <button class="item-btn" onclick="previewBookmarkItem('${bookmark.id}')">👁️ プレビュー</button>
       <button class="item-btn" onclick="editBookmark('${bookmark.id}')">✏️ 編集</button>
       <button class="item-btn" onclick="duplicateBookmark('${bookmark.id}')">📄 複製</button>
       <button class="item-btn danger" onclick="deleteBookmark('${bookmark.id}')">🗑️ 削除</button>
@@ -490,6 +602,163 @@ function closeBookmarkModal() {
   editingBookmarkId = null
 }
 
+// ヘルプモーダル表示
+function openHelpModal() {
+  elements.helpModal.classList.add('show')
+}
+
+// ヘルプモーダル非表示
+function closeHelpModal() {
+  elements.helpModal.classList.remove('show')
+}
+
+// プレビューモーダル表示
+let currentPreviewItem = null
+
+function openPreviewModal(item, type = 'history') {
+  currentPreviewItem = { ...item, type }
+  
+  // プレビュータイトル設定
+  const titleIcons = {
+    'history': '📄',
+    'bookmark': '⭐',
+    'ip': '🌐'
+  }
+  elements.previewTitle.textContent = `${titleIcons[type]} プレビュー`
+  
+  // 基本情報設定
+  elements.previewType.textContent = item.content_type || 'text'
+  elements.previewSize.textContent = formatFileSize(item.content.length)
+  elements.previewDate.textContent = new Date(item.timestamp).toLocaleString()
+  
+  // コンテンツ設定
+  displayPreviewContent(item.content)
+  
+  // アクションボタンの設定
+  setupPreviewActions(item, type)
+  
+  elements.previewModal.classList.add('show')
+}
+
+// プレビューモーダル非表示
+function closePreviewModal() {
+  elements.previewModal.classList.remove('show')
+  currentPreviewItem = null
+}
+
+// プレビューコンテンツ表示
+function displayPreviewContent(content) {
+  const contentElement = elements.previewContent
+  
+  // クラスをリセット
+  contentElement.className = 'preview-content'
+  
+  // コンテンツタイプを判定してスタイリング
+  const contentType = detectContentType(content)
+  contentElement.classList.add(contentType)
+  
+  // コンテンツを処理して表示
+  const processedContent = processContentForPreview(content, contentType)
+  contentElement.innerHTML = processedContent
+}
+
+// コンテンツタイプ検出
+function detectContentType(content) {
+  const trimmed = content.trim()
+  
+  // URL判定
+  if (trimmed.match(/^https?:\/\/\S+$/)) {
+    return 'url'
+  }
+  
+  // JSON判定
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
+      (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      JSON.parse(trimmed)
+      return 'json'
+    } catch {
+      // JSONパースに失敗した場合は通常テキスト
+    }
+  }
+  
+  // コード判定（一般的なプログラミング言語のパターン）
+  if (trimmed.match(/^(function|class|import|export|const|let|var|if|for|while|def|public|private)/m) ||
+      trimmed.includes('```') || trimmed.includes('<script>') || trimmed.includes('<?php')) {
+    return 'code'
+  }
+  
+  // 長いテキスト（200文字以上）
+  if (content.length > 200) {
+    return 'large-text'
+  }
+  
+  return 'text'
+}
+
+// プレビュー用コンテンツ処理
+function processContentForPreview(content, type) {
+  switch (type) {
+    case 'json':
+      try {
+        const parsed = JSON.parse(content)
+        return escapeHtml(JSON.stringify(parsed, null, 2))
+      } catch {
+        return escapeHtml(content)
+      }
+    
+    case 'url':
+      const escapedUrl = escapeHtml(content)
+      return `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer">${escapedUrl}</a>`
+    
+    case 'code':
+      return `<code>${escapeHtml(content)}</code>`
+    
+    default:
+      return escapeHtml(content)
+  }
+}
+
+// HTML エスケープ
+function escapeHtml(text) {
+  const div = document.createElement('div')
+  div.textContent = text
+  return div.innerHTML
+}
+
+// ファイルサイズフォーマット
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
+
+// プレビューアクション設定
+function setupPreviewActions(item, type) {
+  // コピーボタン
+  elements.previewCopyBtn.onclick = () => {
+    navigator.clipboard.writeText(item.content)
+    updateStatus('クリップボードにコピーしました', 'success')
+  }
+  
+  // ブックマークボタン（履歴アイテムのみ表示）
+  if (type === 'history') {
+    elements.previewBookmarkBtn.style.display = 'inline-flex'
+    elements.previewBookmarkBtn.onclick = () => {
+      openBookmarkModal({
+        name: `プレビューから追加 #${Date.now()}`,
+        content: item.content,
+        tags: []
+      })
+      closePreviewModal()
+    }
+  } else {
+    elements.previewBookmarkBtn.style.display = 'none'
+  }
+}
+
 // ブックマーク保存
 async function saveBookmark() {
   try {
@@ -616,9 +885,42 @@ window.copyToClipboard = async function(itemId) {
     if (item) {
       await navigator.clipboard.writeText(item.content)
       updateStatus('クリップボードにコピーしました', 'success')
+      
+      // アクセス回数を増加
+      await invoke('increment_access_count', {
+        itemId: itemId,
+        itemType: 'history'
+      })
+      
+      // 表示を更新
+      setTimeout(() => loadHistory(), 100)
     }
   } catch (error) {
     console.error('コピーエラー:', error)
+  }
+}
+
+window.previewHistoryItem = async function(itemId) {
+  try {
+    const history = await invoke('get_clipboard_history')
+    const item = history.find(h => h.id === itemId)
+    if (item) {
+      openPreviewModal(item, 'history')
+    }
+  } catch (error) {
+    console.error('プレビューエラー:', error)
+  }
+}
+
+window.previewBookmarkItem = async function(bookmarkId) {
+  try {
+    const bookmarks = await invoke('get_bookmarks')
+    const bookmark = bookmarks.find(b => b.id === bookmarkId)
+    if (bookmark) {
+      openPreviewModal(bookmark, 'bookmark')
+    }
+  } catch (error) {
+    console.error('プレビューエラー:', error)
   }
 }
 
@@ -657,6 +959,15 @@ window.copyBookmarkContent = async function(bookmarkId) {
     if (bookmark) {
       await navigator.clipboard.writeText(bookmark.content)
       updateStatus('ブックマーク内容をコピーしました', 'success')
+      
+      // アクセス回数を増加
+      await invoke('increment_access_count', {
+        itemId: bookmarkId,
+        itemType: 'bookmark'
+      })
+      
+      // 表示を更新
+      setTimeout(() => loadBookmarks(), 100)
     }
   } catch (error) {
     console.error('コピーエラー:', error)
@@ -744,5 +1055,437 @@ setInterval(() => {
   }
 }, 10000)
 
+// キーボードナビゲーション
+let selectedItemIndex = 0
+let currentItems = []
+
+function setupKeyboardNavigation() {
+  document.addEventListener('keydown', handleKeyboardNavigation)
+}
+
+function handleKeyboardNavigation(event) {
+  // モーダルが開いている場合はモーダル内のナビゲーション
+  if (elements.bookmarkModal.classList.contains('show')) {
+    handleModalKeyNavigation(event)
+    return
+  }
+  
+  // Cmd/Ctrl + 数字でタブ切り替え
+  if ((event.metaKey || event.ctrlKey) && !event.shiftKey) {
+    const tabKeys = {
+      '1': 'history',
+      '2': 'bookmarks', 
+      '3': 'ips',
+      '4': 'settings'
+    }
+    
+    if (tabKeys[event.key]) {
+      event.preventDefault()
+      switchTab(tabKeys[event.key])
+      return
+    }
+    
+    // Cmd/Ctrl + F で検索フォーカス
+    if (event.key === 'f') {
+      event.preventDefault()
+      focusSearchInput()
+      return
+    }
+    
+    // Cmd/Ctrl + N で新規ブックマーク（ブックマークタブのみ）
+    if (event.key === 'n' && currentTab === 'bookmarks') {
+      event.preventDefault()
+      openBookmarkModal()
+      return
+    }
+  }
+  
+  // 検索フィールドにフォーカスがある場合はリターン
+  const activeElement = document.activeElement
+  if (activeElement && (activeElement.classList.contains('search-input') || activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+    if (event.key === 'Escape') {
+      activeElement.blur()
+      updateSelectedItems()
+    }
+    return
+  }
+  
+  // ?キーでヘルプ表示
+  if (event.key === '?' && !event.shiftKey) {
+    event.preventDefault()
+    openHelpModal()
+    return
+  }
+  
+  // 方向キーナビゲーション
+  if (['ArrowUp', 'ArrowDown', 'Enter', 'Space', 'Escape'].includes(event.key)) {
+    event.preventDefault()
+    
+    switch (event.key) {
+      case 'ArrowUp':
+        navigateItems(-1)
+        break
+      case 'ArrowDown':
+        navigateItems(1)
+        break
+      case 'Enter':
+      case 'Space':
+        activateSelectedItem()
+        break
+      case 'Escape':
+        clearSelection()
+        break
+    }
+  }
+  
+  // 削除キー
+  if (event.key === 'Delete' || event.key === 'Backspace') {
+    if (selectedItemIndex >= 0 && currentItems.length > 0) {
+      event.preventDefault()
+      deleteSelectedItem()
+    }
+  }
+  
+  // コピー (Cmd/Ctrl + C)
+  if ((event.metaKey || event.ctrlKey) && event.key === 'c') {
+    if (selectedItemIndex >= 0 && currentItems.length > 0) {
+      event.preventDefault()
+      copySelectedItem()
+    }
+  }
+}
+
+function handleModalKeyNavigation(event) {
+  if (event.key === 'Escape') {
+    closeBookmarkModal()
+  } else if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+    saveBookmark()
+  } else if (event.key === 'Tab') {
+    // タブキーでフォーカス移動（デフォルト動作）
+    return
+  }
+}
+
+function focusSearchInput() {
+  const searchInputs = {
+    'history': elements.historySearch,
+    'bookmarks': elements.bookmarkSearch,
+    'ips': elements.ipSearch
+  }
+  
+  const input = searchInputs[currentTab]
+  if (input) {
+    input.focus()
+    input.select()
+  }
+}
+
+function updateSelectedItems() {
+  // 現在のタブのアイテムを取得
+  const listElements = {
+    'history': elements.historyList,
+    'bookmarks': elements.bookmarksList,
+    'ips': elements.ipsList
+  }
+  
+  const listElement = listElements[currentTab]
+  if (listElement) {
+    currentItems = Array.from(listElement.querySelectorAll('.item-card'))
+    selectedItemIndex = 0
+    updateItemSelection()
+  } else {
+    currentItems = []
+    selectedItemIndex = -1
+  }
+}
+
+function navigateItems(direction) {
+  if (currentItems.length === 0) {
+    updateSelectedItems()
+    return
+  }
+  
+  selectedItemIndex += direction
+  
+  // 範囲チェック
+  if (selectedItemIndex < 0) {
+    selectedItemIndex = currentItems.length - 1
+  } else if (selectedItemIndex >= currentItems.length) {
+    selectedItemIndex = 0
+  }
+  
+  updateItemSelection()
+  scrollToSelectedItem()
+}
+
+function updateItemSelection() {
+  // 全ての選択を解除
+  currentItems.forEach(item => item.classList.remove('selected'))
+  
+  // 現在の選択をハイライト
+  if (selectedItemIndex >= 0 && selectedItemIndex < currentItems.length) {
+    currentItems[selectedItemIndex].classList.add('selected')
+  }
+}
+
+function scrollToSelectedItem() {
+  if (selectedItemIndex >= 0 && selectedItemIndex < currentItems.length) {
+    const selectedItem = currentItems[selectedItemIndex]
+    selectedItem.scrollIntoView({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'nearest'
+    })
+  }
+}
+
+function activateSelectedItem() {
+  if (selectedItemIndex >= 0 && selectedItemIndex < currentItems.length) {
+    const selectedItem = currentItems[selectedItemIndex]
+    
+    // アイテムのコピーボタンをクリック
+    const copyButton = selectedItem.querySelector('.item-btn')
+    if (copyButton) {
+      copyButton.click()
+    }
+  }
+}
+
+function deleteSelectedItem() {
+  if (selectedItemIndex >= 0 && selectedItemIndex < currentItems.length) {
+    const selectedItem = currentItems[selectedItemIndex]
+    
+    // 削除ボタンを探してクリック
+    const deleteButton = selectedItem.querySelector('.item-btn.danger, .item-btn[onclick*="delete"]')
+    if (deleteButton && confirm('選択されたアイテムを削除しますか？')) {
+      deleteButton.click()
+    }
+  }
+}
+
+function copySelectedItem() {
+  if (selectedItemIndex >= 0 && selectedItemIndex < currentItems.length) {
+    const selectedItem = currentItems[selectedItemIndex]
+    
+    // コピーボタンをクリック
+    const copyButton = selectedItem.querySelector('.item-btn[onclick*="copy"]')
+    if (copyButton) {
+      copyButton.click()
+    }
+  }
+}
+
+function clearSelection() {
+  selectedItemIndex = -1
+  updateItemSelection()
+}
+
+// タブ切り替え時にアイテムを更新
+const originalSwitchTab = switchTab
+window.switchTab = function(tabName) {
+  originalSwitchTab(tabName)
+  setTimeout(updateSelectedItems, 100) // 少し遅延してDOMが更新されてから実行
+}
+
+// データ読み込み後にアイテムを更新
+const originalDisplayHistory = displayHistory
+function displayHistory(history) {
+  originalDisplayHistory(history)
+  if (currentTab === 'history') {
+    setTimeout(updateSelectedItems, 50)
+  }
+}
+
+const originalDisplayBookmarks = displayBookmarks
+function displayBookmarks(bookmarks) {
+  originalDisplayBookmarks(bookmarks)
+  if (currentTab === 'bookmarks') {
+    setTimeout(updateSelectedItems, 50)
+  }
+}
+
+const originalDisplayIPs = displayIPs
+function displayIPs(ips) {
+  originalDisplayIPs(ips)
+  if (currentTab === 'ips') {
+    setTimeout(updateSelectedItems, 50)
+  }
+}
+
+// ダークモード管理
+let isDarkMode = false
+
+function initDarkMode() {
+  // ローカルストレージからダークモード設定を読み込み
+  isDarkMode = localStorage.getItem('darkMode') === 'true'
+  applyDarkMode()
+}
+
+function toggleDarkMode() {
+  isDarkMode = !isDarkMode
+  localStorage.setItem('darkMode', isDarkMode.toString())
+  applyDarkMode()
+  updateStatus(`${isDarkMode ? 'ダーク' : 'ライト'}モードに切り替えました`, 'success')
+}
+
+function applyDarkMode() {
+  const body = document.body
+  const toggleBtn = elements.darkModeToggle
+  const toggleIcon = toggleBtn.querySelector('.toggle-icon')
+  const toggleText = toggleBtn.querySelector('.toggle-text')
+  
+  if (isDarkMode) {
+    body.classList.add('dark-mode')
+    toggleBtn.classList.add('active')
+    toggleIcon.textContent = '☀️'
+    toggleText.textContent = 'ライト'
+  } else {
+    body.classList.remove('dark-mode')
+    toggleBtn.classList.remove('active')
+    toggleIcon.textContent = '🌙'
+    toggleText.textContent = 'ダーク'
+  }
+}
+
+// Phase 7: 最適化・ログ機能
+async function optimizeMemory() {
+  try {
+    updateStatus('メモリ最適化を実行中...', 'info')
+    const result = await invoke('optimize_memory')
+    updateStatus(result, 'success')
+    await loadAllData() // データを再読み込み
+    await updateStats() // 統計を更新
+  } catch (error) {
+    console.error('メモリ最適化エラー:', error)
+    updateStatus(`メモリ最適化エラー: ${error}`, 'error')
+  }
+}
+
+async function viewLogs() {
+  try {
+    const logs = await invoke('get_app_logs', { lines: 100 }) // 最新100行
+    elements.logsContent.innerHTML = logs.map(line => 
+      `<div class="log-line">${escapeHtml(line)}</div>`
+    ).join('')
+    elements.logsModal.classList.add('show')
+    
+    // ログを最下部にスクロール
+    elements.logsContent.scrollTop = elements.logsContent.scrollHeight
+  } catch (error) {
+    console.error('ログ取得エラー:', error)
+    updateStatus(`ログ取得エラー: ${error}`, 'error')
+  }
+}
+
+async function clearLogs() {
+  if (confirm('ログファイルをクリアしますか？')) {
+    try {
+      await invoke('clear_app_logs')
+      updateStatus('ログファイルをクリアしました', 'success')
+      // ログモーダルが開いている場合は更新
+      if (elements.logsModal.classList.contains('show')) {
+        await viewLogs()
+      }
+    } catch (error) {
+      console.error('ログクリアエラー:', error)
+      updateStatus(`ログクリアエラー: ${error}`, 'error')
+    }
+  }
+}
+
+async function showDiagnostics() {
+  try {
+    const diagnostics = await invoke('get_app_diagnostics')
+    
+    const diagnosticsHtml = `
+      <div class="diagnostics-section">
+        <h4>📊 システム情報</h4>
+        <div class="diagnostic-item">
+          <span>バージョン:</span>
+          <span>${diagnostics.version}</span>
+        </div>
+        <div class="diagnostic-item">
+          <span>最終更新:</span>
+          <span>${new Date(diagnostics.timestamp).toLocaleString()}</span>
+        </div>
+      </div>
+      
+      <div class="diagnostics-section">
+        <h4>💾 データ統計</h4>
+        <div class="diagnostic-item">
+          <span>履歴アイテム数:</span>
+          <span>${diagnostics.data_stats.history_count}</span>
+        </div>
+        <div class="diagnostic-item">
+          <span>ブックマーク数:</span>
+          <span>${diagnostics.data_stats.bookmarks_count}</span>
+        </div>
+        <div class="diagnostic-item">
+          <span>IP履歴数:</span>
+          <span>${diagnostics.data_stats.ips_count}</span>
+        </div>
+        <div class="diagnostic-item">
+          <span>総データサイズ:</span>
+          <span>${formatFileSize(diagnostics.data_stats.total_history_size)}</span>
+        </div>
+        <div class="diagnostic-item">
+          <span>データファイルサイズ:</span>
+          <span>${formatFileSize(diagnostics.data_stats.data_file_size)}</span>
+        </div>
+      </div>
+      
+      <div class="diagnostics-section">
+        <h4>🖥️ システム状態</h4>
+        <div class="diagnostic-item">
+          <span>ログファイルサイズ:</span>
+          <span>${formatFileSize(diagnostics.system_stats.log_file_size)}</span>
+        </div>
+        <div class="diagnostic-item">
+          <span>履歴制限:</span>
+          <span>${diagnostics.system_stats.settings.history_limit}件</span>
+        </div>
+        <div class="diagnostic-item">
+          <span>IP制限:</span>
+          <span>${diagnostics.system_stats.settings.ip_limit}件</span>
+        </div>
+      </div>
+      
+      <div class="diagnostics-section">
+        <h4>🔍 ヘルス状態</h4>
+        <div class="diagnostic-item">
+          <span>データ整合性:</span>
+          <span class="health-${diagnostics.health.data_integrity.toLowerCase()}">${diagnostics.health.data_integrity}</span>
+        </div>
+        <div class="diagnostic-item">
+          <span>メモリ使用量:</span>
+          <span class="health-${diagnostics.health.memory_usage.toLowerCase()}">${diagnostics.health.memory_usage}</span>
+        </div>
+        <div class="diagnostic-item">
+          <span>ディスク使用量:</span>
+          <span class="health-${diagnostics.health.disk_usage.toLowerCase()}">${diagnostics.health.disk_usage}</span>
+        </div>
+      </div>
+    `
+    
+    elements.diagnosticsContent.innerHTML = diagnosticsHtml
+    elements.diagnosticsModal.classList.add('show')
+  } catch (error) {
+    console.error('診断情報取得エラー:', error)
+    updateStatus(`診断情報取得エラー: ${error}`, 'error')
+  }
+}
+
+function closeLogsModal() {
+  elements.logsModal.classList.remove('show')
+}
+
+function closeDiagnosticsModal() {
+  elements.diagnosticsModal.classList.remove('show')
+}
+
 // ページロード時に初期化
-document.addEventListener('DOMContentLoaded', initApp)
+document.addEventListener('DOMContentLoaded', () => {
+  initDarkMode()
+  initApp()
+  setupKeyboardNavigation()
+})
