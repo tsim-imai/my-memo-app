@@ -45,6 +45,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // リアルタイム更新のリスナー
   setupEventListeners()
+  
+  // ドラッグ移動機能を設定
+  setupWindowDrag()
 })
 
 // タブ切り替え
@@ -312,6 +315,55 @@ function formatFileSize(bytes) {
   if (bytes < 1024) return `${bytes}B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`
   return `${Math.round(bytes / (1024 * 1024))}MB`
+}
+
+// ドラッグ移動機能
+function setupWindowDrag() {
+  const header = document.querySelector('.small-header')
+  let isDragging = false
+  let dragOffset = { x: 0, y: 0 }
+
+  header.addEventListener('mousedown', (e) => {
+    // クローズボタンやタブのクリックは無視
+    if (e.target.closest('.close-button') || e.target.closest('.small-tab')) {
+      return
+    }
+    
+    isDragging = true
+    const rect = header.getBoundingClientRect()
+    dragOffset.x = e.clientX - rect.left
+    dragOffset.y = e.clientY - rect.top
+    
+    // マウスカーソルを変更
+    document.body.style.cursor = 'grabbing'
+    header.style.cursor = 'grabbing'
+    
+    e.preventDefault()
+  })
+
+  document.addEventListener('mousemove', async (e) => {
+    if (!isDragging) return
+    
+    try {
+      // Tauriのウィンドウ位置を更新
+      await invoke('set_window_position', {
+        x: e.screenX - dragOffset.x,
+        y: e.screenY - dragOffset.y
+      })
+    } catch (error) {
+      console.error('ウィンドウ移動エラー:', error)
+    }
+    
+    e.preventDefault()
+  })
+
+  document.addEventListener('mouseup', () => {
+    if (isDragging) {
+      isDragging = false
+      document.body.style.cursor = ''
+      header.style.cursor = 'move'
+    }
+  })
 }
 
 // グローバル関数として公開

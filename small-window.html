@@ -38,7 +38,7 @@
       align-items: center;
       justify-content: space-between;
       cursor: move;
-      -webkit-app-region: drag;
+      user-select: none;
     }
 
     .small-title {
@@ -50,7 +50,6 @@
     .small-tabs {
       display: flex;
       gap: 4px;
-      -webkit-app-region: no-drag;
     }
 
     .small-tab {
@@ -62,7 +61,6 @@
       cursor: pointer;
       color: #666;
       transition: all 0.2s ease;
-      -webkit-app-region: no-drag;
     }
 
     .small-tab.active {
@@ -87,7 +85,6 @@
       align-items: center;
       justify-content: center;
       transition: all 0.2s ease;
-      -webkit-app-region: no-drag;
       margin-left: 8px;
     }
 
@@ -276,7 +273,7 @@
   <div class="small-container">
     <div class="small-header">
       <span class="small-title">📋 クリップボード選択</span>
-      <div style="display: flex; align-items: center; -webkit-app-region: no-drag;">
+      <div style="display: flex; align-items: center;">
         <div class="small-tabs">
           <button class="small-tab active" data-tab="history">履歴</button>
           <button class="small-tab" data-tab="bookmarks">⭐</button>

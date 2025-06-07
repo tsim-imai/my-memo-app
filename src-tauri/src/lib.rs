@@ -1779,6 +1779,26 @@ async fn show_small_window(app_handle: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn set_window_position(app_handle: AppHandle, x: i32, y: i32) -> Result<String, String> {
+    if let Some(small_window) = app_handle.get_webview_window("small") {
+        use tauri::Position;
+        let position = Position::Physical(tauri::PhysicalPosition { x, y });
+        
+        match small_window.set_position(position) {
+            Ok(_) => {
+                Ok("Window position updated successfully".to_string())
+            }
+            Err(e) => {
+                log::error!("ウィンドウ位置設定失敗: {}", e);
+                Err(format!("Failed to set window position: {}", e))
+            }
+        }
+    } else {
+        Err("Small window not found".to_string())
+    }
+}
+
+#[tauri::command]
 async fn hide_small_window(app_handle: AppHandle) -> Result<String, String> {
     if let Some(small_window) = app_handle.get_webview_window("small") {
         match small_window.hide() {
@@ -2186,6 +2206,7 @@ pub fn run() {
         get_app_diagnostics,
         show_small_window,
         hide_small_window,
+        set_window_position,
         paste_content
     ])
     .run(tauri::generate_context!())
