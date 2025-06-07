@@ -32,18 +32,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   })
 
-  // ウィンドウ外クリックで閉じる（グローバルで追跡する変数が必要）
-  window.isDragging = false
-  
-  document.addEventListener('click', (e) => {
-    // ドラッグ中は無視
-    if (window.isDragging) return
-    
-    // small-containerの外をクリックした場合
-    if (!e.target.closest('.small-container')) {
-      closeWindow()
-    }
-  })
 
   // データ読み込み
   await loadData()
@@ -51,8 +39,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // リアルタイム更新のリスナー
   setupEventListeners()
   
-  // ドラッグ移動機能を設定
-  setupWindowDrag()
+  // フォーカス管理を設定
+  setupFocusManagement()
 })
 
 // タブ切り替え
@@ -322,105 +310,22 @@ function formatFileSize(bytes) {
   return `${Math.round(bytes / (1024 * 1024))}MB`
 }
 
-// ドラッグ移動機能
-function setupWindowDrag() {
-  const header = document.querySelector('.small-header')
-  let isDragging = false
-  let dragOffset = { x: 0, y: 0 }
-  let windowPosition = { x: 0, y: 0 }
-
-  // 初期ウィンドウ位置を取得
-  const initPosition = async () => {
-    try {
-      const position = await invoke('get_window_position')
-      windowPosition = position
-    } catch (error) {
-      console.warn('初期位置取得失敗:', error)
-    }
-  }
-
-  header.addEventListener('mousedown', async (e) => {
-    // クローズボタンやタブのクリックは無視
-    if (e.target.closest('.close-button') || e.target.closest('.small-tab')) {
-      return
-    }
-    
-    isDragging = true
-    window.isDragging = true
-    
-    // 現在のウィンドウ位置を取得
-    try {
-      windowPosition = await invoke('get_window_position')
-    } catch (error) {
-      console.warn('位置取得失敗:', error)
-    }
-    
-    // ドラッグ開始点を記録
-    dragOffset.x = e.clientX
-    dragOffset.y = e.clientY
-    
-    // マウスカーソルを変更
-    document.body.style.cursor = 'grabbing'
-    header.style.cursor = 'grabbing'
-    
-    e.preventDefault()
-    e.stopPropagation()
+// フォーカス管理機能
+function setupFocusManagement() {
+  // ウィンドウフォーカス失ったら閉じる
+  window.addEventListener('blur', () => {
+    console.log('ウィンドウがフォーカスを失いました')
+    setTimeout(() => {
+      closeWindow()
+    }, 100) // 少し遅延してから閉じる
   })
-
-  document.addEventListener('mousemove', async (e) => {
-    if (!isDragging) return
-    
-    try {
-      // マウスの移動量を計算
-      const deltaX = e.clientX - dragOffset.x
-      const deltaY = e.clientY - dragOffset.y
-      
-      // 新しいウィンドウ位置を計算
-      const newX = windowPosition.x + deltaX
-      const newY = windowPosition.y + deltaY
-      
-      // 画面境界を取得して制限
-      const screenBounds = await invoke('get_screen_bounds')
-      const windowWidth = 400 // ウィンドウ幅
-      const windowHeight = 500 // ウィンドウ高さ
-      
-      // 画面内に制限
-      const boundedX = Math.max(0, Math.min(newX, screenBounds.width - windowWidth))
-      const boundedY = Math.max(0, Math.min(newY, screenBounds.height - windowHeight))
-      
-      // ウィンドウ位置を更新
-      await invoke('set_window_position', {
-        x: boundedX,
-        y: boundedY
-      })
-      
-      // 新しい位置を記録
-      windowPosition.x = boundedX
-      windowPosition.y = boundedY
-      dragOffset.x = e.clientX
-      dragOffset.y = e.clientY
-      
-    } catch (error) {
-      console.error('ウィンドウ移動エラー:', error)
+  
+  // ウィンドウ外クリックでも閉じる（既存機能を残す）
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.small-container')) {
+      closeWindow()
     }
-    
-    e.preventDefault()
-    e.stopPropagation()
   })
-
-  document.addEventListener('mouseup', (e) => {
-    if (isDragging) {
-      isDragging = false
-      window.isDragging = false
-      document.body.style.cursor = ''
-      header.style.cursor = 'move'
-    }
-    e.preventDefault()
-    e.stopPropagation()
-  })
-
-  // 初期化
-  initPosition()
 }
 
 // グローバル関数として公開
