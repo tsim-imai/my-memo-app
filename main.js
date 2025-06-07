@@ -18,7 +18,6 @@ const elements = {
   historySearch: document.getElementById('history-search'),
   historySort: document.getElementById('history-sort'),
   clearHistoryBtn: document.getElementById('clear-history-btn'),
-  removeDuplicatesBtn: document.getElementById('remove-duplicates-btn'),
   
   // ブックマーク
   bookmarksList: document.getElementById('bookmarks-list'),
@@ -163,9 +162,6 @@ async function setupTauriEvents() {
     await clearHistory()
   })
   
-  await listen('tray-remove-duplicates', async () => {
-    await removeDuplicates()
-  })
 }
 
 // 検索リスナーの設定
@@ -198,7 +194,6 @@ function setupButtonEvents() {
   // 履歴操作
   elements.clearHistoryBtn.addEventListener('click', clearHistory)
   
-  elements.removeDuplicatesBtn.addEventListener('click', removeDuplicates)
   
   // ブックマーク操作
   elements.addBookmarkBtn.addEventListener('click', () => openBookmarkModal())
@@ -551,17 +546,6 @@ async function clearHistory() {
   }
 }
 
-// 重複削除
-async function removeDuplicates() {
-  try {
-    const result = await invoke('remove_duplicate_clipboard_items')
-    await loadHistory()
-    updateStatus(result, 'success')
-  } catch (error) {
-    console.error('重複削除エラー:', error)
-    updateStatus(`重複削除エラー: ${error}`, 'error')
-  }
-}
 
 // IP履歴クリア
 async function clearIPs() {

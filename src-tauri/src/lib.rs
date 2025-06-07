@@ -1254,52 +1254,6 @@ fn reset_ip_count(
     }
 }
 
-#[tauri::command]
-fn remove_duplicate_clipboard_items(
-    state: State<'_, ClipboardManager>,
-    app_handle: AppHandle,
-) -> Result<String, String> {
-    match state.app_data.lock() {
-        Ok(mut data) => {
-            let original_count = data.history.len();
-            
-            // メモリ最適化: 最新を保持する重複削除
-            use std::collections::HashMap;
-            let mut seen_content: HashMap<String, ClipboardItem> = HashMap::new();
-            
-            // 最新のアイテムを保持（後から来るもので上書き）
-            for item in data.history.iter() {
-                let content_key = item.content.clone();
-                
-                // 同じコンテンツがある場合、より新しいものを保持
-                if let Some(existing_item) = seen_content.get(&content_key) {
-                    if item.timestamp > existing_item.timestamp {
-                        seen_content.insert(content_key, item.clone());
-                    }
-                } else {
-                    seen_content.insert(content_key, item.clone());
-                }
-            }
-            
-            // 重複削除後のアイテムをタイムスタンプ順にソート
-            let mut unique_items: Vec<ClipboardItem> = seen_content.into_values().collect();
-            unique_items.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-            data.history = unique_items;
-            
-            let removed_count = original_count - data.history.len();
-            log::info!("重複アイテム削除: {} 件削除（残り {} 件）", removed_count, data.history.len());
-            
-            // データを自動保存
-            drop(data);
-            if let Err(e) = state.save_to_file(&app_handle) {
-                log::warn!("自動保存エラー: {}", e);
-            }
-            
-            Ok(format!("Removed {} duplicate items, {} items remaining", removed_count, original_count - removed_count))
-        }
-        Err(_) => Err("Failed to access clipboard history".to_string()),
-    }
-}
 
 #[tauri::command]
 fn remove_duplicate_bookmarks(
@@ -2036,7 +1990,6 @@ pub fn run() {
       let separator = PredefinedMenuItem::separator(app)?;
       let clipboard_submenu = Submenu::with_id_and_items(app, "clipboard", "クリップボード", true, &[
         &MenuItem::with_id(app, "clear_history", "履歴をクリア", true, None::<&str>)?,
-        &MenuItem::with_id(app, "remove_duplicates", "重複を削除", true, None::<&str>)?,
       ])?;
       let quit_item = MenuItem::with_id(app, "quit", "終了", true, None::<&str>)?;
       
@@ -2078,10 +2031,6 @@ pub fn run() {
           "clear_history" => {
             log::info!("トレイメニュー: 履歴をクリア");
             let _ = app_handle_for_tray.emit("tray-clear-history", ());
-          }
-          "remove_duplicates" => {
-            log::info!("トレイメニュー: 重複を削除");
-            let _ = app_handle_for_tray.emit("tray-remove-duplicates", ());
           }
           "quit" => {
             log::info!("トレイメニュー: アプリケーション終了");
@@ -2135,7 +2084,6 @@ pub fn run() {
         search_ip_history,
         get_ip_stats,
         reset_ip_count,
-        remove_duplicate_clipboard_items,
         remove_duplicate_bookmarks,
         find_duplicate_clipboard_items,
         find_duplicate_bookmarks,
