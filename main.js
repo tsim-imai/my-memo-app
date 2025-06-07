@@ -8,7 +8,6 @@ let editingBookmarkId = null
 
 // DOM要素の取得
 const elements = {
-  status: document.getElementById('status'),
   
   // タブ
   tabButtons: document.querySelectorAll('.tab-button'),
@@ -145,20 +144,17 @@ async function setupTauriEvents() {
   await listen('clipboard-updated', async (event) => {
     console.log('クリップボード更新:', event.payload)
     await loadHistory()
-    updateStatus(`クリップボード更新 (${new Date().toLocaleTimeString()})`, 'success')
   })
   
   // IP検出
   await listen('ip-detected', async (event) => {
     console.log('IP検出:', event.payload)
-    updateStatus(`IP検出: ${event.payload} (${new Date().toLocaleTimeString()})`, 'info')
     await loadIPs()
   })
   
   // ホットキートリガー
   await listen('hotkey-triggered', async (event) => {
     console.log('ホットキー:', event.payload)
-    updateStatus(`ホットキーアクティブ: ${event.payload}`, 'info')
     await loadAllData()
   })
   
@@ -284,8 +280,8 @@ function setupSettingsEvents() {
 
 // ステータス更新
 function updateStatus(message, type = 'info') {
-  elements.status.textContent = message
-  elements.status.className = `status-${type}`
+  // ヘッダーを削除したため、ステータスはコンソールに出力
+  console.log(`[${type.toUpperCase()}] ${message}`)
 }
 
 // タブ切り替え
