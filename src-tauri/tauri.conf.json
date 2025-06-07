@@ -32,7 +32,9 @@
         "decorations": false,
         "center": true,
         "alwaysOnTop": true,
-        "skipTaskbar": true
+        "skipTaskbar": true,
+        "dragDropEnabled": false,
+        "shadow": true
       }
     ],
     "security": {

@@ -37,6 +37,8 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      cursor: move;
+      -webkit-app-region: drag;
     }
 
     .small-title {
@@ -48,6 +50,7 @@
     .small-tabs {
       display: flex;
       gap: 4px;
+      -webkit-app-region: no-drag;
     }
 
     .small-tab {
@@ -59,6 +62,7 @@
       cursor: pointer;
       color: #666;
       transition: all 0.2s ease;
+      -webkit-app-region: no-drag;
     }
 
     .small-tab.active {
@@ -68,6 +72,32 @@
 
     .small-tab:hover:not(.active) {
       background: rgba(0, 0, 0, 0.05);
+    }
+
+    .close-button {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #ff5f57;
+      border: none;
+      color: white;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      -webkit-app-region: no-drag;
+      margin-left: 8px;
+    }
+
+    .close-button:hover {
+      background: #ff4136;
+      transform: scale(1.1);
+    }
+
+    .close-button:active {
+      transform: scale(0.95);
     }
 
     .small-content {
@@ -246,10 +276,13 @@
   <div class="small-container">
     <div class="small-header">
       <span class="small-title">📋 クリップボード選択</span>
-      <div class="small-tabs">
-        <button class="small-tab active" data-tab="history">履歴</button>
-        <button class="small-tab" data-tab="bookmarks">⭐</button>
-        <button class="small-tab" data-tab="ips">🌐</button>
+      <div style="display: flex; align-items: center; -webkit-app-region: no-drag;">
+        <div class="small-tabs">
+          <button class="small-tab active" data-tab="history">履歴</button>
+          <button class="small-tab" data-tab="bookmarks">⭐</button>
+          <button class="small-tab" data-tab="ips">🌐</button>
+        </div>
+        <button class="close-button" onclick="closeWindow()">×</button>
       </div>
     </div>
     

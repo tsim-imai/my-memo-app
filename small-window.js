@@ -32,6 +32,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   })
 
+  // ウィンドウ外クリックで閉じる
+  document.addEventListener('click', (e) => {
+    // small-containerの外をクリックした場合
+    if (!e.target.closest('.small-container')) {
+      closeWindow()
+    }
+  })
+
   // データ読み込み
   await loadData()
   
