@@ -448,69 +448,63 @@ impl ClipboardManager {
                                     // 前回の内容と比較
                                     if let Ok(mut last) = last_content.lock() {
                                         if last.as_ref() != Some(&text) {
-                                *last = Some(text.clone());
-                                
-                                // 履歴に追加
-                                if let Ok(mut data) = app_data.lock() {
-                                    // 重複チェック
-                                    let should_add = data.history.last()
-                                        .map(|item| item.content != text)
-                                        .unwrap_or(true);
-                                        
-                                    if should_add {
-                                        let item = ClipboardItem {
-                                            id: Uuid::new_v4().to_string(),
-                                            content: text.clone(),
-                                            content_type: "text".to_string(),
-                                            timestamp: Utc::now(),
-                                            size: text.len(),
-                                            access_count: 0,
-                                            last_accessed: None,
-                                        };
-                                        
-                                        // 設定で指定された件数制限
-                                        let limit = data.settings.history_limit;
-                                        if data.history.len() >= limit {
-                                            data.history.remove(0);
-                                        }
-                                        
-                                        data.history.push(item);
-                                        log::info!("クリップボード変更検出: {} chars", text.len());
-                                        
-                                            // データ変更時の通知のみ（自動保存は別タスクで実行）
+                                            *last = Some(text.clone());
                                             
-                                            // フロントエンドに通知（非同期）
-                                            let _ = app_handle.emit("clipboard-updated", &text);
-                                    }
-                                }
-                                    }
-                                }
-                                
-                                // IP検出処理（ハッシュが変更された場合のみ）
-                                if let Ok(last) = last_content.lock() {
-                                    if last.as_ref() != Some(&text) && !text.trim().is_empty() {
-                                // IP検出を実行
-                                if let Ok(_data) = app_data.lock() {
-                                    let manager_clone = ClipboardManager {
-                                        app_data: Arc::clone(&app_data),
-                                        last_clipboard_content: Arc::new(Mutex::new(None)),
-                                        is_monitoring: Arc::new(Mutex::new(false)),
-                                        hotkey_registered: Arc::new(Mutex::new(false)),
-                                    };
-                                    
-                                    let detected_ips = manager_clone.extract_ip_addresses(&text);
-                                    drop(_data);
-                                    
-                                    for ip in detected_ips {
-                                        if let Err(e) = manager_clone.add_ip_to_history(ip.clone()) {
-                                            log::warn!("IP履歴追加エラー: {}", e);
-                                        } else {
-                                            log::info!("IP検出・追加: {}", ip);
-                                            let _ = app_handle.emit("ip-detected", &ip);
+                                            // 履歴に追加
+                                            if let Ok(mut data) = app_data.lock() {
+                                                // 重複チェック
+                                                let should_add = data.history.last()
+                                                    .map(|item| item.content != text)
+                                                    .unwrap_or(true);
+                                                    
+                                                if should_add {
+                                                    let item = ClipboardItem {
+                                                        id: Uuid::new_v4().to_string(),
+                                                        content: text.clone(),
+                                                        content_type: "text".to_string(),
+                                                        timestamp: Utc::now(),
+                                                        size: text.len(),
+                                                        access_count: 0,
+                                                        last_accessed: None,
+                                                    };
+                                                    
+                                                    // 設定で指定された件数制限
+                                                    let limit = data.settings.history_limit;
+                                                    if data.history.len() >= limit {
+                                                        data.history.remove(0);
+                                                    }
+                                                    
+                                                    data.history.push(item);
+                                                    log::info!("クリップボード変更検出: {} chars", text.len());
+                                                    
+                                                    // フロントエンドに通知（非同期）
+                                                    let _ = app_handle.emit("clipboard-updated", &text);
+                                                }
+                                            }
+                                            
+                                            // IP検出処理
+                                            if let Ok(_data) = app_data.lock() {
+                                                let manager_clone = ClipboardManager {
+                                                    app_data: Arc::clone(&app_data),
+                                                    last_clipboard_content: Arc::new(Mutex::new(None)),
+                                                    is_monitoring: Arc::new(Mutex::new(false)),
+                                                    hotkey_registered: Arc::new(Mutex::new(false)),
+                                                };
+                                                
+                                                let detected_ips = manager_clone.extract_ip_addresses(&text);
+                                                drop(_data);
+                                                
+                                                for ip in detected_ips {
+                                                    if let Err(e) = manager_clone.add_ip_to_history(ip.clone()) {
+                                                        log::warn!("IP履歴追加エラー: {}", e);
+                                                    } else {
+                                                        log::info!("IP検出・追加: {}", ip);
+                                                        let _ = app_handle.emit("ip-detected", &ip);
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
-                                    }
-                                }
                                 }
                             }
                             Err(e) => {
@@ -1355,7 +1349,7 @@ fn get_app_logs(
     let log_path = ClipboardManager::get_log_file_path(&app_handle)?;
     
     if !log_path.exists() {
-        return Ok(vec!["\u30ed\u30b0\u30d5\u30a1\u30a4\u30eb\u304c\u5b58\u5728\u3057\u307e\u305b\u3093".to_string()]);
+        return Ok(vec!["ログファイルが存在しません".to_string()]);
     }
     
     let content = fs::read_to_string(&log_path)
@@ -1366,7 +1360,8 @@ fn get_app_logs(
     // 最新のログから指定行数を返す
     if let Some(max_lines) = lines {
         if log_lines.len() > max_lines {
-            log_lines = log_lines.into_iter().skip(log_lines.len() - max_lines).collect();
+            let total_lines = log_lines.len();
+            log_lines = log_lines.into_iter().skip(total_lines - max_lines).collect();
         }
     }
     
@@ -1382,7 +1377,7 @@ fn clear_app_logs(app_handle: AppHandle) -> Result<String, String> {
             .map_err(|e| format!("Failed to clear log file: {}", e))?;
     }
     
-    ClipboardManager::log_to_file(&app_handle, "INFO", "\u30ed\u30b0\u30d5\u30a1\u30a4\u30eb\u304c\u30af\u30ea\u30a2\u3055\u308c\u307e\u3057\u305f");
+    ClipboardManager::log_to_file(&app_handle, "INFO", "ログファイルがクリアされました");
     Ok("Log file cleared successfully".to_string())
 }
 
@@ -1447,7 +1442,7 @@ fn optimize_memory(
             
             // 大きなコンテンツ（10KB以上）で古い（7日以上）アイテムを削除
             let cutoff_date = Utc::now() - chrono::Duration::days(7);
-            let original_history_count = data.history.len();
+            let _original_history_count = data.history.len();
             
             data.history.retain(|item| {
                 if item.size > 10240 && item.timestamp < cutoff_date { // 10KB以上かつ7日以上古い
