@@ -320,7 +320,7 @@ function setupFocusManagement() {
     }, 100) // 少し遅延してから閉じる
   })
   
-  // ウィンドウ外クリックでも閉じる（既存機能を残す）
+  // ウィンドウ外クリックでも閉じる
   document.addEventListener('click', (e) => {
     if (!e.target.closest('.small-container')) {
       closeWindow()
