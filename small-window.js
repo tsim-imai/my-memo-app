@@ -311,12 +311,29 @@ function formatFileSize(bytes) {
 }
 
 // フォーカス管理機能
+let windowJustShown = false;
+let closeTimer = null;
+
 function setupFocusManagement() {
   // ウィンドウフォーカス失ったら閉じる
   window.addEventListener('blur', () => {
+    // ウィンドウ表示直後の blur イベントは無視
+    if (windowJustShown) {
+      console.log('ウィンドウ表示直後のblurイベントをスキップ');
+      return;
+    }
+    
     console.log('ウィンドウがフォーカスを失いました')
-    setTimeout(() => {
-      closeWindow()
+    // 既存のタイマーをキャンセル
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      console.log('🔄 既存のクローズタイマーをキャンセル');
+    }
+    
+    closeTimer = setTimeout(() => {
+      console.log('⏰ タイマー実行 - ウィンドウを閉じます');
+      closeWindow();
+      closeTimer = null;
     }, 100) // 少し遅延してから閉じる
   })
   
@@ -327,6 +344,26 @@ function setupFocusManagement() {
     }
   })
 }
+
+// ウィンドウ表示時に呼ばれる関数
+function notifyWindowShown() {
+  // 既存のクローズタイマーをキャンセル
+  if (closeTimer) {
+    clearTimeout(closeTimer);
+    closeTimer = null;
+    console.log('🛑 クローズタイマーをキャンセル');
+  }
+  
+  windowJustShown = true;
+  console.log('🪟 ウィンドウ表示通知 - 300ms間blurイベント無効');
+  setTimeout(() => {
+    windowJustShown = false;
+    console.log('🪟 blurイベント監視再開');
+  }, 300);
+}
+
+// グローバル関数として公開
+window.notifyWindowShown = notifyWindowShown;
 
 // グローバル関数として公開
 window.copyAndPaste = copyAndPaste

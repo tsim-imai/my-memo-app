@@ -295,6 +295,27 @@ impl WindowManager {
                 Ok(_) => {
                     let _ = small_window.set_focus();
                     
+                    // 少し待機してからJavaScriptに通知
+                    tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+                    
+                    // JavaScriptにウィンドウ表示を通知
+                    match small_window.eval("
+                        console.log('🔧 Rust→JS通知開始');
+                        try {
+                            if (typeof window.notifyWindowShown === 'function') {
+                                window.notifyWindowShown();
+                                console.log('✅ notifyWindowShown実行完了');
+                            } else {
+                                console.log('❌ notifyWindowShown関数が存在しません');
+                            }
+                        } catch(e) {
+                            console.log('❌ JavaScript実行エラー:', e.message);
+                        }
+                    ") {
+                        Ok(_) => println!("✅ JavaScript通知送信成功"),
+                        Err(e) => println!("❌ JavaScript通知失敗: {}", e),
+                    }
+                    
                     // 表示後の最終位置確認（問題2のデバッグ用）
                     if let Ok(final_pos) = small_window.inner_position() {
                         println!("🪟 最終位置: {:?}", final_pos);
