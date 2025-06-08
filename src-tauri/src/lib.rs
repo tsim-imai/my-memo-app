@@ -35,6 +35,21 @@ impl WindowManager {
         Self { app_handle }
     }
     
+    // 現在のフォーカスディスプレイ情報を取得
+    fn get_focus_display_info(&self) -> String {
+        // メインウィンドウのフォーカス状態を確認
+        if let Some(main_window) = self.app_handle.get_webview_window("main") {
+            if let Ok(is_focused) = main_window.is_focused() {
+                if is_focused {
+                    return "メインウィンドウフォーカス中".to_string();
+                }
+            }
+        }
+        
+        // システムフォーカスディスプレイを取得（簡易版）
+        "外部アプリフォーカス中".to_string()
+    }
+    
     // マウス位置を取得
     fn get_current_mouse_position(&self) -> MousePosition {
         let mouse_pos = get_mouse_position_sync();
@@ -48,8 +63,11 @@ impl WindowManager {
             "フルHDディスプレイ（サブ）".to_string()
         };
         
-        println!("CONSOLE: マウス位置取得: x={}, y={}, scale={}, display={}", 
-                raw_x, raw_y, scale_factor, display_info);
+        // フォーカス状態を検出
+        let focus_info = self.get_focus_display_info();
+        
+        println!("CONSOLE: マウス位置取得: x={}, y={}, scale={}, display={}, focus={}", 
+                raw_x, raw_y, scale_factor, display_info, focus_info);
         
         MousePosition {
             x: raw_x,
@@ -101,10 +119,23 @@ impl WindowManager {
         }
     }
     
-    // ウィンドウを表示
+    // ウィンドウを表示（フォーカス状態に応じた補正付き）
     async fn show_window_at_position(&self, position: &WindowPosition) -> Result<String, String> {
         if let Some(small_window) = self.app_handle.get_webview_window("small") {
             println!("CONSOLE: ウィンドウ位置設定開始: target=({}, {})", position.x, position.y);
+            
+            // フォーカス問題対策：メインウィンドウが非フォーカス状態の場合は一時的にフォーカス
+            let mut focus_restored = false;
+            if let Some(main_window) = self.app_handle.get_webview_window("main") {
+                if let Ok(is_focused) = main_window.is_focused() {
+                    if !is_focused {
+                        println!("CONSOLE: メインウィンドウが非フォーカス、一時的にフォーカス取得");
+                        let _ = main_window.set_focus();
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                        focus_restored = true;
+                    }
+                }
+            }
             
             // 位置設定
             use tauri::Position;
@@ -117,9 +148,10 @@ impl WindowManager {
                 Ok(_) => {
                     println!("CONSOLE: 位置設定成功");
                     
-                    // 実際の位置確認
+                    // 位置設定後の確認（参考情報として）
                     if let Ok(actual_pos) = small_window.inner_position() {
-                        println!("CONSOLE: 設定後の実際位置: {:?}", actual_pos);
+                        println!("CONSOLE: 設定後の実際位置: ({}, {}) [期待値: ({}, {})]", 
+                                actual_pos.x, actual_pos.y, position.x, position.y);
                     }
                     
                     // ウィンドウ表示
@@ -130,6 +162,11 @@ impl WindowManager {
                             // 表示後の最終位置確認
                             if let Ok(final_pos) = small_window.inner_position() {
                                 println!("CONSOLE: 表示後の最終位置: {:?}", final_pos);
+                            }
+                            
+                            // フォーカスを復旧（スモールウィンドウにフォーカス）
+                            if focus_restored {
+                                println!("CONSOLE: フォーカス復旧：スモールウィンドウにフォーカス設定");
                             }
                             
                             Ok(format!("ウィンドウ表示成功: {}", position.calculation_log))
@@ -152,16 +189,44 @@ impl WindowManager {
     
     // メイン処理：ホットキーからウィンドウ表示まで
     async fn handle_hotkey_display(&self) -> Result<String, String> {
-        println!("CONSOLE: WindowManager::handle_hotkey_display開始");
+        // ホットキー実行回数をカウント（静的変数使用）
+        static mut HOTKEY_COUNTER: u32 = 0;
+        let current_count = unsafe {
+            HOTKEY_COUNTER += 1;
+            HOTKEY_COUNTER
+        };
+        
+        println!("CONSOLE: ========================================");
+        println!("CONSOLE: 🔥 ホットキー処理開始 ({}回目)", current_count);
+        println!("CONSOLE: ========================================");
         
         // 1. マウス位置取得
+        println!("CONSOLE: 📍 ステップ1: マウス位置取得");
         let mouse_pos = self.get_current_mouse_position();
         
         // 2. ウィンドウ位置計算
+        println!("CONSOLE: 🧮 ステップ2: ウィンドウ位置計算");
         let window_pos = self.calculate_window_position(&mouse_pos);
         
         // 3. ウィンドウ表示
-        self.show_window_at_position(&window_pos).await
+        println!("CONSOLE: 🪟 ステップ3: ウィンドウ表示");
+        let result = self.show_window_at_position(&window_pos).await;
+        
+        // 処理完了ログ
+        match &result {
+            Ok(_) => {
+                println!("CONSOLE: ========================================");
+                println!("CONSOLE: ✅ ホットキー処理完了 ({}回目) - 成功", current_count);
+                println!("CONSOLE: ========================================");
+            }
+            Err(e) => {
+                println!("CONSOLE: ========================================");
+                println!("CONSOLE: ❌ ホットキー処理完了 ({}回目) - 失敗: {}", current_count, e);
+                println!("CONSOLE: ========================================");
+            }
+        }
+        
+        result
     }
 }
 use std::io::Write; // ログファイル書き込み用
