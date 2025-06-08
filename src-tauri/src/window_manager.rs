@@ -241,47 +241,69 @@ impl WindowManager {
     // ウィンドウを表示（安定化処理）
     async fn show_window_at_position(&self, position: &WindowPosition) -> Result<String, String> {
         if let Some(small_window) = self.app_handle.get_webview_window("small") {
-            // 前回位置の記憶をリセットするため、一度非表示にする
+            // 強力な位置リセット: 非表示 → 最小化解除
             let _ = small_window.hide();
+            let _ = small_window.unminimize();
             
-            // 位置設定 - Physical座標での二重スケーリング問題を回避するため、Logical座標を試行
+            // Tauri内部の位置記憶をリセットするため、画面外の位置に一度設定
+            // center()の代わりに画面外位置を使用してフォーカス競合を回避
             use tauri::Position;
+            let reset_position = Position::Physical(tauri::PhysicalPosition { x: -1000, y: -1000 });
+            let _ = small_window.set_position(reset_position);
+            
+            // 短時間待機してTauriの内部状態をリセット
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             
             // スケールファクターに基づいて座標種類を決定
             let tauri_position = if position.calculation_log.contains("スケーリング後") {
                 // 4Kディスプレイ: 既にスケーリング済みなのでLogical座標で設定
                 let logical_x = (position.x as f64 / 2.0) as i32;
                 let logical_y = (position.y as f64 / 2.0) as i32;
+                println!("🖥️ 4K座標変換: ({}, {}) → Logical({}, {})", position.x, position.y, logical_x, logical_y);
                 Position::Logical(tauri::LogicalPosition { 
                     x: logical_x as f64, 
                     y: logical_y as f64 
                 })
             } else {
                 // フルHDディスプレイ: Physical座標のまま
+                println!("🖥️ フルHD座標: Physical({}, {})", position.x, position.y);
                 Position::Physical(tauri::PhysicalPosition { 
                     x: position.x, 
                     y: position.y 
                 })
             };
             
-            match small_window.set_position(tauri_position) {
-                Ok(_) => {
-                    // ウィンドウ表示
-                    match small_window.show() {
-                        Ok(_) => {
-                            let _ = small_window.set_focus();
-                            
-                            // 表示後の最終位置確認（問題2のデバッグ用）
-                            if let Ok(final_pos) = small_window.inner_position() {
-                                println!("🪟 最終位置: {:?}", final_pos);
-                            }
-                            
-                            Ok("ウィンドウ表示成功".to_string())
+            // 位置を複数回設定して確実に反映（Tauri位置記憶の強制上書き）
+            for i in 1..=3 {
+                match small_window.set_position(tauri_position.clone()) {
+                    Ok(_) => {
+                        println!("✅ 位置設定成功 ({}回目)", i);
+                        break;
+                    }
+                    Err(e) => {
+                        println!("⚠️ 位置設定失敗 ({}回目): {}", i, e);
+                        if i == 3 {
+                            return Err(format!("位置設定失敗: {}", e));
                         }
-                        Err(e) => Err(format!("ウィンドウ表示失敗: {}", e))
+                        tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
                     }
                 }
-                Err(e) => Err(format!("位置設定失敗: {}", e))
+            }
+            
+            // ウィンドウ表示
+            match small_window.show() {
+                Ok(_) => {
+                    let _ = small_window.set_focus();
+                    
+                    // 表示後の最終位置確認（問題2のデバッグ用）
+                    if let Ok(final_pos) = small_window.inner_position() {
+                        println!("🪟 最終位置: {:?}", final_pos);
+                        println!("📏 位置差異: 計算({}, {}) vs 実際({:?})", position.x, position.y, final_pos);
+                    }
+                    
+                    Ok("ウィンドウ表示成功".to_string())
+                }
+                Err(e) => Err(format!("ウィンドウ表示失敗: {}", e))
             }
         } else {
             Err("スモールウィンドウが見つかりません".to_string())
