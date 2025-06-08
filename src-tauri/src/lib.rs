@@ -50,9 +50,84 @@ impl WindowManager {
         "外部アプリフォーカス中".to_string()
     }
     
+    // ディスプレイのスケールファクターを取得
+    #[cfg(target_os = "macos")]
+    fn get_display_scale_factor_for_point(&self, x: f64, y: f64) -> f64 {
+        extern "C" {
+            fn CGDisplayPixelsWide(display: u32) -> usize;
+            fn CGDisplayPixelsHigh(display: u32) -> usize;
+            fn CGGetDisplaysWithPoint(point_x: f64, point_y: f64, max_displays: u32, displays: *mut u32, display_count: *mut u32) -> i32;
+        }
+        
+        unsafe {
+            let mut display_id: u32 = 0;
+            let mut display_count: u32 = 0;
+            
+            let result = CGGetDisplaysWithPoint(x, y, 1, &mut display_id, &mut display_count);
+            
+            if result == 0 && display_count > 0 {
+                let logical_width = CGDisplayPixelsWide(display_id) as f64;
+                let logical_height = CGDisplayPixelsHigh(display_id) as f64;
+                
+                let scale_factor = if logical_width == 1512.0 && logical_height == 982.0 {
+                    2.0
+                } else if logical_width == 1920.0 && logical_height == 1080.0 {
+                    1.0
+                } else {
+                    1.0
+                };
+                
+                scale_factor
+            } else {
+                1.0
+            }
+        }
+    }
+    
+    // マウス位置を同期的に取得
+    #[cfg(target_os = "macos")]
+    fn get_mouse_position_sync(&self) -> serde_json::Value {
+        #[repr(C)]
+        struct CGPoint {
+            x: f64,
+            y: f64,
+        }
+        
+        extern "C" {
+            fn CGEventCreate(source: *const std::ffi::c_void) -> *const std::ffi::c_void;
+            fn CGEventGetLocation(event: *const std::ffi::c_void) -> CGPoint;
+            fn CFRelease(cf: *const std::ffi::c_void);
+        }
+        
+        unsafe {
+            let event = CGEventCreate(std::ptr::null());
+            if !event.is_null() {
+                let location = CGEventGetLocation(event);
+                CFRelease(event);
+                
+                let x = location.x as i32;
+                let y = location.y as i32;
+                let scale_factor = self.get_display_scale_factor_for_point(location.x, location.y);
+                
+                return serde_json::json!({
+                    "x": x,
+                    "y": y,
+                    "scale_factor": scale_factor
+                });
+            }
+        }
+        
+        // フォールバック
+        serde_json::json!({
+            "x": 960,
+            "y": 540,
+            "scale_factor": 2.0
+        })
+    }
+    
     // マウス位置を取得
     fn get_current_mouse_position(&self) -> MousePosition {
-        let mouse_pos = get_mouse_position_sync();
+        let mouse_pos = self.get_mouse_position_sync();
         let raw_x = mouse_pos.get("x").and_then(|v| v.as_i64()).unwrap_or(960) as i32;
         let raw_y = mouse_pos.get("y").and_then(|v| v.as_i64()).unwrap_or(540) as i32;
         let scale_factor = mouse_pos.get("scale_factor").and_then(|v| v.as_f64()).unwrap_or(1.0);
@@ -119,23 +194,10 @@ impl WindowManager {
         }
     }
     
-    // ウィンドウを表示（フォーカス状態に応じた補正付き）
+    // ウィンドウを表示（安定化処理）
     async fn show_window_at_position(&self, position: &WindowPosition) -> Result<String, String> {
         if let Some(small_window) = self.app_handle.get_webview_window("small") {
             println!("CONSOLE: ウィンドウ位置設定開始: target=({}, {})", position.x, position.y);
-            
-            // フォーカス問題対策：メインウィンドウが非フォーカス状態の場合は一時的にフォーカス
-            let mut focus_restored = false;
-            if let Some(main_window) = self.app_handle.get_webview_window("main") {
-                if let Ok(is_focused) = main_window.is_focused() {
-                    if !is_focused {
-                        println!("CONSOLE: メインウィンドウが非フォーカス、一時的にフォーカス取得");
-                        let _ = main_window.set_focus();
-                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                        focus_restored = true;
-                    }
-                }
-            }
             
             // 位置設定
             use tauri::Position;
@@ -164,10 +226,8 @@ impl WindowManager {
                                 println!("CONSOLE: 表示後の最終位置: {:?}", final_pos);
                             }
                             
-                            // フォーカスを復旧（スモールウィンドウにフォーカス）
-                            if focus_restored {
-                                println!("CONSOLE: フォーカス復旧：スモールウィンドウにフォーカス設定");
-                            }
+                            // スモールウィンドウにフォーカス設定（フォーカス問題対策）
+                            println!("CONSOLE: スモールウィンドウにフォーカス設定");
                             
                             Ok(format!("ウィンドウ表示成功: {}", position.calculation_log))
                         }
@@ -227,6 +287,24 @@ impl WindowManager {
         }
         
         result
+    }
+    
+    // スモールウィンドウを非表示
+    async fn hide_window(&self) -> Result<String, String> {
+        if let Some(small_window) = self.app_handle.get_webview_window("small") {
+            match small_window.hide() {
+                Ok(_) => {
+                    log::info!("スモールウィンドウを非表示");
+                    Ok("Small window hidden successfully".to_string())
+                }
+                Err(e) => {
+                    log::error!("スモールウィンドウ非表示失敗: {}", e);
+                    Err(format!("Failed to hide small window: {}", e))
+                }
+            }
+        } else {
+            Err("Small window not found".to_string())
+        }
     }
 }
 use std::io::Write; // ログファイル書き込み用
@@ -1979,178 +2057,7 @@ async fn paste_content(content: String) -> Result<String, String> {
     }
 }
 
-#[tauri::command]
-async fn show_small_window(app_handle: AppHandle) -> Result<String, String> {
-    if let Some(small_window) = app_handle.get_webview_window("small") {
-        match small_window.show() {
-            Ok(_) => {
-                let _ = small_window.set_focus();
-                let _ = small_window.center();
-                log::info!("スモールウィンドウを表示");
-                Ok("Small window shown successfully".to_string())
-            }
-            Err(e) => {
-                log::error!("スモールウィンドウ表示失敗: {}", e);
-                Err(format!("Failed to show small window: {}", e))
-            }
-        }
-    } else {
-        Err("Small window not found".to_string())
-    }
-}
-
-
-#[cfg(target_os = "macos")]
-fn get_display_scale_factor_for_point(x: f64, y: f64) -> f64 {
-    extern "C" {
-        fn CGDisplayPixelsWide(display: u32) -> usize;
-        fn CGDisplayPixelsHigh(display: u32) -> usize;
-        fn CGGetDisplaysWithPoint(point_x: f64, point_y: f64, max_displays: u32, displays: *mut u32, display_count: *mut u32) -> i32;
-    }
-    
-    unsafe {
-        let mut display_id: u32 = 0;
-        let mut display_count: u32 = 0;
-        
-        // マウス位置のディスプレイを取得
-        let result = CGGetDisplaysWithPoint(x, y, 1, &mut display_id, &mut display_count);
-        
-        if result == 0 && display_count > 0 {
-            let logical_width = CGDisplayPixelsWide(display_id) as f64;
-            let logical_height = CGDisplayPixelsHigh(display_id) as f64;
-            
-            // 論理解像度から推測：正確な判定条件
-            let scale_factor = if logical_width == 1512.0 && logical_height == 982.0 {
-                // 4K（3008x1964物理）の2倍スケーリング
-                2.0
-            } else if logical_width == 1920.0 && logical_height == 1080.0 {
-                // フルHD（1920x1080物理）の1倍スケーリング
-                1.0
-            } else {
-                // デフォルト：フルHD相当として扱う
-                1.0
-            };
-            
-            println!("CONSOLE: 座標({}, {})のディスプレイ情報 - display_id: {}, logical_size: {}x{}, scale_factor: {}", 
-                x, y, display_id, logical_width, logical_height, scale_factor);
-            scale_factor
-        } else {
-            println!("CONSOLE: ディスプレイ取得失敗、デフォルトスケール使用");
-            1.0
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn get_mouse_position_sync() -> serde_json::Value {
-    println!("CONSOLE: 同期マウス位置取得開始");
-    
-    // macOSのCoreGraphicsを使用してマウス位置を取得
-    #[repr(C)]
-    struct CGPoint {
-        x: f64,
-        y: f64,
-    }
-    
-    extern "C" {
-        fn CGEventCreate(source: *const std::ffi::c_void) -> *const std::ffi::c_void;
-        fn CGEventGetLocation(event: *const std::ffi::c_void) -> CGPoint;
-        fn CFRelease(cf: *const std::ffi::c_void);
-    }
-    
-    unsafe {
-        let event = CGEventCreate(std::ptr::null());
-        if !event.is_null() {
-            let location = CGEventGetLocation(event);
-            CFRelease(event);
-            
-            let x = location.x as i32;
-            let y = location.y as i32;
-            
-            // マウス位置のディスプレイのスケールファクターを取得
-            let scale_factor = get_display_scale_factor_for_point(location.x, location.y);
-            
-            println!("CONSOLE: 同期CGEvent成功: マウス位置 x={}, y={}, scale_factor={}", x, y, scale_factor);
-            
-            return serde_json::json!({
-                "x": x,
-                "y": y,
-                "scale_factor": scale_factor
-            });
-        }
-    }
-    
-    // フォールバック（画面中央）
-    println!("CONSOLE: 同期CGEventフォールバックを使用: (960, 540)");
-    serde_json::json!({
-        "x": 960,
-        "y": 540,
-        "scale_factor": 2.0
-    })
-}
-
-#[cfg(target_os = "macos")]
-#[tauri::command]
-async fn get_mouse_position() -> Result<serde_json::Value, String> {
-    use std::process::Command;
-    
-    println!("CONSOLE: マウス位置取得開始");
-    log::info!("マウス位置取得開始");
-    // macOSでマウス位置を取得するAppleScript
-    let script = "tell application \"System Events\" to return (item 1 of (get position of mouse)) & \",\" & (item 2 of (get position of mouse))";
-    
-    match Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-    {
-        Ok(output) => {
-            log::info!("AppleScript実行結果: success={}", output.status.success());
-            log::info!("stdout: {:?}", String::from_utf8_lossy(&output.stdout));
-            log::info!("stderr: {:?}", String::from_utf8_lossy(&output.stderr));
-            
-            if output.status.success() {
-                let mouse_pos = String::from_utf8_lossy(&output.stdout);
-                log::info!("マウス位置文字列: '{}'", mouse_pos.trim());
-                let coords: Vec<&str> = mouse_pos.trim().split(',').collect();
-                log::info!("分割された座標: {:?}", coords);
-                
-                if coords.len() == 2 {
-                    if let (Ok(x), Ok(y)) = (coords[0].parse::<i32>(), coords[1].parse::<i32>()) {
-                        let position = serde_json::json!({
-                            "x": x,
-                            "y": y
-                        });
-                        log::info!("成功: マウス位置 x={}, y={}", x, y);
-                        return Ok(position);
-                    } else {
-                        log::error!("座標の数値変換に失敗: x='{}', y='{}'", coords[0], coords[1]);
-                    }
-                } else {
-                    log::error!("座標の分割に失敗: 要素数={}", coords.len());
-                }
-            } else {
-                log::error!("AppleScript実行失敗");
-            }
-            
-            // フォールバック（画面中央）
-            log::warn!("フォールバックを使用: (960, 540)");
-            let fallback = serde_json::json!({
-                "x": 960,
-                "y": 540
-            });
-            Ok(fallback)
-        }
-        Err(e) => {
-            log::error!("AppleScript実行エラー: {}", e);
-            let fallback = serde_json::json!({
-                "x": 960,
-                "y": 540
-            });
-            Ok(fallback)
-        }
-    }
-}
+// ヘルパー関数はWindowManager内に移動済み
 
 #[tauri::command]
 async fn show_small_window_at_mouse(app_handle: AppHandle) -> Result<String, String> {
@@ -2164,20 +2071,8 @@ async fn show_small_window_at_mouse(app_handle: AppHandle) -> Result<String, Str
 
 #[tauri::command]
 async fn hide_small_window(app_handle: AppHandle) -> Result<String, String> {
-    if let Some(small_window) = app_handle.get_webview_window("small") {
-        match small_window.hide() {
-            Ok(_) => {
-                log::info!("スモールウィンドウを非表示");
-                Ok("Small window hidden successfully".to_string())
-            }
-            Err(e) => {
-                log::error!("スモールウィンドウ非表示失敗: {}", e);
-                Err(format!("Failed to hide small window: {}", e))
-            }
-        }
-    } else {
-        Err("Small window not found".to_string())
-    }
+    let window_manager = WindowManager::new(app_handle);
+    window_manager.hide_window().await
 }
 
 #[cfg(target_os = "macos")]
@@ -2642,10 +2537,8 @@ pub fn run() {
         get_app_logs,
         clear_app_logs,
         get_app_diagnostics,
-        show_small_window,
         show_small_window_at_mouse,
         hide_small_window,
-        get_mouse_position,
         paste_content
     ])
     .run(tauri::generate_context!())
