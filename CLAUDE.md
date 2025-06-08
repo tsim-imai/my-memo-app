@@ -19,7 +19,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Project Structure
 - **Frontend**: Single-page app with `index.html`, `main.js`, vanilla CSS
-- **Backend**: Rust with Tauri framework in `src-tauri/src/lib.rs`
+- **Backend**: Modular Rust architecture in `src-tauri/src/`
+  - `lib.rs` - Core application logic and ClipboardManager
+  - `models.rs` - Data structures (AppData, ClipboardItem, BookmarkItem, etc.)
+  - `file_manager.rs` - JSON persistence and file operations
+  - `clipboard_monitor.rs` - Real-time clipboard monitoring
+  - `window_manager.rs` - macOS window positioning and multi-display handling
+  - `commands/` - Tauri command modules organized by functionality
 - **Configuration**: `src-tauri/tauri.conf.json` (Tauri settings), `src-tauri/Cargo.toml` (Rust deps)
 
 ## Architecture Overview
@@ -37,13 +43,18 @@ This is a **completed** macOS-specific clipboard management application built wi
 - **Enhanced Functions**: Function wrapping pattern in `enhanceDisplayFunctions()` for UI updates
 - **Japanese UI**: All user-facing text in Japanese, console logging for status updates
 
-**Backend Architecture (src-tauri/src/lib.rs)**
-- **Thread-Safe State**: `ClipboardManager` with `Arc<Mutex<AppData>>` for concurrent access
-- **Real-Time Monitoring**: 250ms clipboard polling with hash-based change detection
-- **Error-Tolerant Init**: Non-blocking initialization with graceful fallback for permissions
-- **40+ Tauri Commands**: Complete CRUD API with consistent `Result<T, String>` error handling
-- **Auto-IP Detection**: Regex pattern `r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b"` with validation
-- **Memory Optimization**: Hash-based duplicate detection, automatic cleanup of large/old items
+**Backend Architecture (Modular Rust)**
+- **Core (`lib.rs`)**: `ClipboardManager` with `Arc<Mutex<AppData>>` for thread-safe state management
+- **Models (`models.rs`)**: Centralized data structures with serde serialization and Default implementations
+- **File Manager (`file_manager.rs`)**: Atomic file operations, JSON persistence, log rotation, and backup recovery
+- **Clipboard Monitor (`clipboard_monitor.rs`)**: 250ms polling with hash-based change detection and IP auto-detection
+- **Window Manager (`window_manager.rs`)**: macOS-specific window positioning, multi-display support, and coordinate system handling
+- **Commands (`commands/`)**: 40+ Tauri commands organized by functionality:
+  - `clipboard_commands.rs` - History management operations
+  - `bookmark_commands.rs` - Bookmark CRUD and search
+  - `ip_commands.rs` - IP detection and history management  
+  - `settings_commands.rs` - Configuration management
+  - `app_commands.rs` - System-level operations and diagnostics
 
 **Data Model**
 ```rust
@@ -92,6 +103,13 @@ Each item tracks `access_count` and `last_accessed` for intelligent sorting and 
 - Background operation without window focus
 - Native macOS look and feel
 
+**Multi-Display Support**
+- Smart window positioning at mouse cursor location across multiple displays
+- Automatic coordinate system detection and scaling (4K vs FullHD)
+- Logical/Physical coordinate conversion to prevent double-scaling issues
+- Dynamic window focus management for cross-display hotkey activation
+- AppleScript-based window focus automation for improved reliability
+
 ## Key Dependencies
 
 **Frontend**
@@ -111,11 +129,13 @@ Each item tracks `access_count` and `last_accessed` for intelligent sorting and 
 This is a **completed production application** with all planned features implemented across 7 development phases. The codebase represents enterprise-level quality with comprehensive error handling, performance optimization, and user experience features.
 
 ### Architecture Patterns
+- **Modular Design**: Separated concerns into focused modules (models, file_manager, clipboard_monitor, window_manager, commands)
 - **Event-driven**: Frontend listens to backend events for real-time updates
 - **Thread-safe**: All shared state protected with `Arc<Mutex<>>`
 - **Async/await**: Non-blocking operations throughout
 - **Error propagation**: Comprehensive `Result<T, String>` error handling
 - **Memory-efficient**: Hash-based operations and automatic cleanup
+- **Cross-module communication**: Clean interfaces between modules with minimal coupling
 
 ## Development Patterns & Conventions
 
@@ -146,3 +166,11 @@ This is a **completed production application** with all planned features impleme
 - **Log Rotation**: `$APP_DATA/clipboard_manager.log` with 5MB size limit and `.old` rotation
 - **Memory Limits**: Configurable cleanup thresholds for history (50 items) and IPs (10 items)
 - **Hash-Based Deduplication**: Content hashing for efficient duplicate detection and memory optimization
+
+### Module Development Guidelines
+- **Models**: Add new data structures to `models.rs` with serde traits and Default implementations
+- **File Operations**: Extend `FileManager` for new persistence requirements with atomic operations
+- **Monitoring**: Enhance `ClipboardMonitor` for new content detection patterns
+- **Window Management**: Modify `WindowManager` for display-specific behaviors and coordinate handling
+- **Commands**: Add new Tauri commands to appropriate modules in `commands/` directory
+- **Cross-module Communication**: Use shared `AppData` state and clear interface contracts between modules

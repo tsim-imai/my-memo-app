@@ -61,47 +61,62 @@ impl WindowManager {
         }
     }
     
-    // マウス位置のウィンドウを強制フォーカス
+    // マウス位置のウィンドウを強制フォーカス（Core Graphics使用）
     #[cfg(target_os = "macos")]
     async fn force_focus_window_at_mouse(&self, x: f64, y: f64) -> bool {
-        // AppleScriptを使ってマウス位置のウィンドウをクリックしてフォーカス
-        use std::process::Command;
+        extern "C" {
+            fn CGEventCreateMouseEvent(
+                source: *const std::ffi::c_void,
+                mouseType: u32,
+                mouseCursorPosition_x: f64,
+                mouseCursorPosition_y: f64,
+                mouseButton: u32,
+            ) -> *const std::ffi::c_void;
+            fn CGEventPost(tap: u32, event: *const std::ffi::c_void);
+            fn CFRelease(cf: *const std::ffi::c_void);
+        }
         
-        let script = format!(
-            r#"
-            tell application "System Events"
-                set mouseLocation to {{{}, {}}}
-                set frontApp to name of first application process whose frontmost is true
-                
-                -- マウス位置をクリックしてそのウィンドウをフォーカス
-                click at mouseLocation
-                delay 0.1
-                
-                -- 成功判定（フロントアプリが変わったかチェック）
-                set newFrontApp to name of first application process whose frontmost is true
-                if frontApp is not equal to newFrontApp then
-                    return true
-                else
-                    return false
-                end if
-            end tell
-            "#,
-            x as i32, y as i32
-        );
+        const K_CG_EVENT_LEFT_MOUSE_DOWN: u32 = 1;
+        const K_CG_EVENT_LEFT_MOUSE_UP: u32 = 2;
+        const K_CG_MOUSE_BUTTON_LEFT: u32 = 0;
+        const K_CG_HID_EVENT_TAP: u32 = 0;
         
-        match Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output() {
-            Ok(output) => {
-                if output.status.success() {
-                    let result_str = String::from_utf8_lossy(&output.stdout);
-                    result_str.trim() == "true"
-                } else {
-                    false
-                }
+        unsafe {
+            println!("🖱️ マウス位置({}, {})でクリックイベント生成", x, y);
+            
+            // マウスダウンイベント
+            let mouse_down_event = CGEventCreateMouseEvent(
+                std::ptr::null(),
+                K_CG_EVENT_LEFT_MOUSE_DOWN,
+                x,
+                y,
+                K_CG_MOUSE_BUTTON_LEFT,
+            );
+            
+            // マウスアップイベント
+            let mouse_up_event = CGEventCreateMouseEvent(
+                std::ptr::null(),
+                K_CG_EVENT_LEFT_MOUSE_UP,
+                x,
+                y,
+                K_CG_MOUSE_BUTTON_LEFT,
+            );
+            
+            if !mouse_down_event.is_null() && !mouse_up_event.is_null() {
+                // クリックイベントを送信
+                CGEventPost(K_CG_HID_EVENT_TAP, mouse_down_event);
+                CGEventPost(K_CG_HID_EVENT_TAP, mouse_up_event);
+                
+                // メモリ解放
+                CFRelease(mouse_down_event);
+                CFRelease(mouse_up_event);
+                
+                println!("✅ クリックイベント送信完了");
+                true
+            } else {
+                println!("❌ クリックイベント作成失敗");
+                false
             }
-            Err(_) => false
         }
     }
     
@@ -289,8 +304,15 @@ impl WindowManager {
             false
         };
         
+        // スモールウィンドウの現在の状態をチェック
+        let small_window_visible = if let Some(small_window) = self.app_handle.get_webview_window("small") {
+            small_window.is_visible().unwrap_or(false)
+        } else {
+            false
+        };
+        
         // 新しいアプローチ: マウス位置のウィンドウを強制フォーカス
-        if !main_window_focused {
+        if !main_window_focused && !small_window_visible {
             println!("🎯 マウス位置のウィンドウを強制フォーカス中...");
             
             // マウス座標を先に取得
@@ -311,6 +333,8 @@ impl WindowManager {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 }
             }
+        } else if small_window_visible {
+            println!("🔄 スモールウィンドウ既表示 - クリックスキップ");
         } else {
             println!("✅ 既にフォーカス中 - 即座に処理");
         }
