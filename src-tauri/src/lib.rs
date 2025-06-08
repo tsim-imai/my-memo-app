@@ -8,6 +8,162 @@ use chrono::{DateTime, Utc};
 use clipboard::{ClipboardProvider, ClipboardContext};
 use std::fs;
 use regex::Regex;
+
+// ウィンドウ管理クラス
+#[derive(Debug, Clone)]
+struct WindowManager {
+    app_handle: AppHandle,
+}
+
+#[derive(Debug, Clone)]
+struct MousePosition {
+    x: i32,
+    y: i32,
+    scale_factor: f64,
+    display_info: String,
+}
+
+#[derive(Debug, Clone)]
+struct WindowPosition {
+    x: i32,
+    y: i32,
+    calculation_log: String,
+}
+
+impl WindowManager {
+    fn new(app_handle: AppHandle) -> Self {
+        Self { app_handle }
+    }
+    
+    // マウス位置を取得
+    fn get_current_mouse_position(&self) -> MousePosition {
+        let mouse_pos = get_mouse_position_sync();
+        let raw_x = mouse_pos.get("x").and_then(|v| v.as_i64()).unwrap_or(960) as i32;
+        let raw_y = mouse_pos.get("y").and_then(|v| v.as_i64()).unwrap_or(540) as i32;
+        let scale_factor = mouse_pos.get("scale_factor").and_then(|v| v.as_f64()).unwrap_or(1.0);
+        
+        let display_info = if scale_factor == 2.0 {
+            "4Kディスプレイ（メイン）".to_string()
+        } else {
+            "フルHDディスプレイ（サブ）".to_string()
+        };
+        
+        println!("CONSOLE: マウス位置取得: x={}, y={}, scale={}, display={}", 
+                raw_x, raw_y, scale_factor, display_info);
+        
+        MousePosition {
+            x: raw_x,
+            y: raw_y,
+            scale_factor,
+            display_info,
+        }
+    }
+    
+    // ウィンドウ位置を計算
+    fn calculate_window_position(&self, mouse_pos: &MousePosition) -> WindowPosition {
+        let _window_width = 400;  // 将来の境界チェック用に予約
+        let window_height = 500;
+        
+        let (final_x, final_y, log) = if mouse_pos.scale_factor == 2.0 {
+            // 4Kディスプレイ: スケーリング適用
+            let scaled_x = (mouse_pos.x as f64 * mouse_pos.scale_factor) as i32;
+            let scaled_y = (mouse_pos.y as f64 * mouse_pos.scale_factor) as i32;
+            let scaled_height = (window_height as f64 * mouse_pos.scale_factor) as i32;
+            
+            let window_x = scaled_x;
+            let window_y = scaled_y - (scaled_height / 2);
+            
+            let log = format!(
+                "{}：元座標({}, {}) → スケーリング後({}, {}) → ウィンドウ位置({}, {})",
+                mouse_pos.display_info, mouse_pos.x, mouse_pos.y, scaled_x, scaled_y, window_x, window_y
+            );
+            
+            (window_x, window_y, log)
+        } else {
+            // フルHDディスプレイ: 生座標使用
+            let window_x = mouse_pos.x;
+            let window_y = mouse_pos.y - (window_height / 2);
+            
+            let log = format!(
+                "{}：マウス座標({}, {}) → ウィンドウ位置({}, {})",
+                mouse_pos.display_info, mouse_pos.x, mouse_pos.y, window_x, window_y
+            );
+            
+            (window_x, window_y, log)
+        };
+        
+        println!("CONSOLE: {}", log);
+        
+        WindowPosition {
+            x: final_x,
+            y: final_y,
+            calculation_log: log,
+        }
+    }
+    
+    // ウィンドウを表示
+    async fn show_window_at_position(&self, position: &WindowPosition) -> Result<String, String> {
+        if let Some(small_window) = self.app_handle.get_webview_window("small") {
+            println!("CONSOLE: ウィンドウ位置設定開始: target=({}, {})", position.x, position.y);
+            
+            // 位置設定
+            use tauri::Position;
+            let tauri_position = Position::Physical(tauri::PhysicalPosition { 
+                x: position.x, 
+                y: position.y 
+            });
+            
+            match small_window.set_position(tauri_position) {
+                Ok(_) => {
+                    println!("CONSOLE: 位置設定成功");
+                    
+                    // 実際の位置確認
+                    if let Ok(actual_pos) = small_window.inner_position() {
+                        println!("CONSOLE: 設定後の実際位置: {:?}", actual_pos);
+                    }
+                    
+                    // ウィンドウ表示
+                    match small_window.show() {
+                        Ok(_) => {
+                            let _ = small_window.set_focus();
+                            
+                            // 表示後の最終位置確認
+                            if let Ok(final_pos) = small_window.inner_position() {
+                                println!("CONSOLE: 表示後の最終位置: {:?}", final_pos);
+                            }
+                            
+                            Ok(format!("ウィンドウ表示成功: {}", position.calculation_log))
+                        }
+                        Err(e) => {
+                            println!("CONSOLE: ウィンドウ表示失敗: {}", e);
+                            Err(format!("ウィンドウ表示失敗: {}", e))
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("CONSOLE: 位置設定失敗: {}", e);
+                    Err(format!("位置設定失敗: {}", e))
+                }
+            }
+        } else {
+            Err("スモールウィンドウが見つかりません".to_string())
+        }
+    }
+    
+    // メイン処理：ホットキーからウィンドウ表示まで
+    async fn handle_hotkey_display(&self) -> Result<String, String> {
+        println!("CONSOLE: WindowManager::handle_hotkey_display開始");
+        
+        // 1. マウス位置取得
+        let mouse_pos = self.get_current_mouse_position();
+        
+        // 2. ウィンドウ位置計算
+        let window_pos = self.calculate_window_position(&mouse_pos);
+        
+        // 3. ウィンドウ表示
+        self.show_window_at_position(&window_pos).await
+    }
+}
 use std::io::Write; // ログファイル書き込み用
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1798,15 +1954,16 @@ fn get_display_scale_factor_for_point(x: f64, y: f64) -> f64 {
             let logical_width = CGDisplayPixelsWide(display_id) as f64;
             let logical_height = CGDisplayPixelsHigh(display_id) as f64;
             
-            // 論理解像度から推測：1512x982は4Kの2倍スケーリング
-            let scale_factor = if (logical_width == 1512.0 && logical_height == 982.0) || 
-                                 (logical_width == 1728.0 && logical_height == 1117.0) ||  // 他の4K設定
-                                 (logical_width < 2000.0 && logical_height < 1500.0 && logical_width > 1400.0) {
-                2.0  // 4Kディスプレイの2倍スケーリング
-            } else if logical_width >= 1920.0 && logical_height >= 1080.0 {
-                1.0  // フルHDまたはそれ以上
+            // 論理解像度から推測：正確な判定条件
+            let scale_factor = if logical_width == 1512.0 && logical_height == 982.0 {
+                // 4K（3008x1964物理）の2倍スケーリング
+                2.0
+            } else if logical_width == 1920.0 && logical_height == 1080.0 {
+                // フルHD（1920x1080物理）の1倍スケーリング
+                1.0
             } else {
-                1.0  // デフォルト
+                // デフォルト：フルHD相当として扱う
+                1.0
             };
             
             println!("CONSOLE: 座標({}, {})のディスプレイ情報 - display_id: {}, logical_size: {}x{}, scale_factor: {}", 
@@ -1935,68 +2092,9 @@ async fn show_small_window_at_mouse(app_handle: AppHandle) -> Result<String, Str
     println!("CONSOLE: show_small_window_at_mouse開始");
     log::info!("show_small_window_at_mouse開始");
     
-    if let Some(small_window) = app_handle.get_webview_window("small") {
-        // マウス位置を取得
-        log::info!("マウス位置取得開始");
-        let mouse_pos = match get_mouse_position().await {
-            Ok(pos) => {
-                log::info!("マウス位置取得成功: {:?}", pos);
-                pos
-            },
-            Err(e) => {
-                log::error!("マウス位置取得失敗: {}", e);
-                serde_json::json!({"x": 960, "y": 540})
-            }
-        };
-        
-        let mouse_x = mouse_pos["x"].as_i64().unwrap_or(960) as i32;
-        let mouse_y = mouse_pos["y"].as_i64().unwrap_or(540) as i32;
-        log::info!("マウス座標: x={}, y={}", mouse_x, mouse_y);
-        
-        // ウィンドウサイズ
-        let window_width = 400;
-        let window_height = 500;
-        
-        // 位置計算
-        // X: ウィンドウの左端がマウス位置
-        // Y: ウィンドウの中央がマウス位置
-        let window_x = mouse_x;
-        let window_y = mouse_y - (window_height / 2);
-        log::info!("計算された位置: x={}, y={}", window_x, window_y);
-        
-        // 画面境界チェック（簡易版）
-        let final_x = std::cmp::max(0, std::cmp::min(window_x, 1920 - window_width));
-        let final_y = std::cmp::max(0, std::cmp::min(window_y, 1080 - window_height));
-        log::info!("境界チェック後の位置: x={}, y={}", final_x, final_y);
-        
-        // ウィンドウ位置を設定
-        use tauri::Position;
-        let position = Position::Physical(tauri::PhysicalPosition { x: final_x, y: final_y });
-        log::info!("Tauriへの位置設定: x={}, y={}", final_x, final_y);
-        
-        match small_window.set_position(position) {
-            Ok(_) => {
-                log::info!("位置設定成功");
-                match small_window.show() {
-                    Ok(_) => {
-                        let _ = small_window.set_focus();
-                        log::info!("スモールウィンドウを表示: x={}, y={}", final_x, final_y);
-                        Ok(format!("Small window shown at mouse position: x={}, y={}", final_x, final_y))
-                    }
-                    Err(e) => {
-                        log::error!("スモールウィンドウ表示失敗: {}", e);
-                        Err(format!("Failed to show small window: {}", e))
-                    }
-                }
-            }
-            Err(e) => {
-                log::error!("ウィンドウ位置設定失敗: {}", e);
-                Err(format!("Failed to set window position: {}", e))
-            }
-        }
-    } else {
-        Err("Small window not found".to_string())
-    }
+    // WindowManagerを使用してウィンドウ表示処理を実行
+    let window_manager = WindowManager::new(app_handle);
+    window_manager.handle_hotkey_display().await
 }
 
 #[tauri::command]
@@ -2316,118 +2414,27 @@ pub fn run() {
             let _ = app_handle_clone.emit("hotkey-triggered", "cmd+shift+v");
           });
         } else {
-          log::error!("tokioランタイムが見つかりません - 同期処理で実行");
-          // 同期処理でマウス位置にウィンドウを表示
-          if let Some(small_window) = app_handle_clone.get_webview_window("small") {
-            println!("CONSOLE: スモールウィンドウ発見 - 現在の状態確認");
-            
-            // ウィンドウの現在の状態をログ出力
-            if let Ok(is_visible) = small_window.is_visible() {
-              println!("CONSOLE: ウィンドウ表示状態: {}", is_visible);
-            }
-            if let Ok(is_focused) = small_window.is_focused() {
-              println!("CONSOLE: ウィンドウフォーカス状態: {}", is_focused);
-            }
-            if let Ok(position) = small_window.outer_position() {
-              println!("CONSOLE: 現在のウィンドウ位置: {:?}", position);
-            }
-            
-            // ウィンドウを確実に非表示にしてからリセット
-            let _ = small_window.hide();
-            println!("CONSOLE: ウィンドウを明示的に非表示化");
-            
-            // 同期でマウス位置を取得
-            let mouse_pos = get_mouse_position_sync();
-            let raw_mouse_x = mouse_pos.get("x").and_then(|v| v.as_i64()).unwrap_or(960) as i32;
-            let raw_mouse_y = mouse_pos.get("y").and_then(|v| v.as_i64()).unwrap_or(540) as i32;
-            println!("CONSOLE: 生マウス座標（既にTauri座標系）: x={}, y={}", raw_mouse_x, raw_mouse_y);
-            
-            // 座標変換は不要、CoreGraphicsが既にTauri形式の座標を返している
-            // マルチディスプレイ対応：負の座標もそのまま使用
-            let mouse_x = raw_mouse_x; // 負の座標も含めてそのまま使用
-            let mouse_y = raw_mouse_y; // 負の座標も含めてそのまま使用
-            
-            println!("CONSOLE: マルチディスプレイ対応：全座標をそのまま使用");
-            println!("CONSOLE: 最終マウス座標: x={}, y={}", mouse_x, mouse_y);
-            
-            // ウィンドウサイズ
-            let window_width = 400;
-            let window_height = 500;
-            
-            // 動的スケールファクターを取得
-            let scale_factor = mouse_pos.get("scale_factor").and_then(|v| v.as_f64()).unwrap_or(2.0);
-            let scaled_mouse_x = (mouse_x as f64 * scale_factor) as i32;
-            let scaled_mouse_y = (mouse_y as f64 * scale_factor) as i32;
-            
-            // ウィンドウ高さにもスケーリングを適用
-            let scaled_window_height = (window_height as f64 * scale_factor) as i32;
-            
-            // 要件通りの位置計算
-            // X: ウィンドウの左端がマウス位置
-            // Y: ウィンドウの中央がマウス位置
-            let window_x = scaled_mouse_x;
-            let window_y = scaled_mouse_y - (scaled_window_height / 2);
-            
-            println!("CONSOLE: ウィンドウ高さにもスケーリング適用テスト");
-            
-            println!("CONSOLE: 元マウス座標: x={}, y={}", mouse_x, mouse_y);
-            println!("CONSOLE: X座標スケーリング補正後: {}", scaled_mouse_x);
-            println!("CONSOLE: Y座標2倍補正後: {}", scaled_mouse_y);
-            println!("CONSOLE: 元ウィンドウ高さ: {}, スケーリング後: {}", window_height, scaled_window_height);
-            println!("CONSOLE: スケーリング後ウィンドウ半分: {}", scaled_window_height / 2);
-            println!("CONSOLE: Y計算: {} - {} = {}", scaled_mouse_y, scaled_window_height / 2, window_y);
-            println!("CONSOLE: 最終ウィンドウ位置: x={}, y={} (左端=マウスX, 中央=マウスY)", window_x, window_y);
-            println!("CONSOLE: 理論的ウィンドウ中央Y座標: {}", window_y + (scaled_window_height / 2));
-            println!("CONSOLE: 動的スケールファクター({})を適用", scale_factor);
-            
-            // デバッグ用: 境界チェックを無効にして生の座標を使用
-            let final_x = window_x;
-            let final_y = window_y;
-            println!("CONSOLE: 境界チェック無効、生座標使用: x={}, y={}", final_x, final_y);
-            
-            // 画面境界チェック情報をログ出力
-            let screen_width = 1920;  // メインディスプレイの幅
-            let screen_height = 1080; // メインディスプレイの高さ
-            println!("CONSOLE: 画面サイズ: {}x{}, ウィンドウサイズ: {}x{}", screen_width, screen_height, window_width, window_height);
-            println!("CONSOLE: Y座標制限値: {}", screen_height - window_height);
-            
-            // ウィンドウ位置を設定
-            use tauri::Position;
-            let position = Position::Physical(tauri::PhysicalPosition { x: final_x, y: final_y });
-            
-            println!("CONSOLE: 位置設定実行前 - target: x={}, y={}", final_x, final_y);
-            
-            match small_window.set_position(position) {
-              Ok(_) => {
-                println!("CONSOLE: 同期位置設定成功");
-                
-                // 位置設定後の確認
-                if let Ok(new_position) = small_window.outer_position() {
-                  println!("CONSOLE: 設定後の実際の位置: {:?}", new_position);
-                }
-                
-                let _ = small_window.show();
-                let _ = small_window.set_focus();
-                log::info!("同期フォールバック表示成功");
-                println!("CONSOLE: 同期フォールバック表示成功");
-                
-                // 表示後の最終確認
-                if let Ok(final_position) = small_window.outer_position() {
-                  println!("CONSOLE: 表示後の最終位置: {:?}", final_position);
-                }
-              },
-              Err(e) => {
-                println!("CONSOLE: 同期位置設定失敗: {}", e);
-                // フォールバック: 中央に表示
-                let _ = small_window.center();
-                let _ = small_window.show();
-                let _ = small_window.set_focus();
-                println!("CONSOLE: 中央表示フォールバック実行");
+          log::error!("tokioランタイムが見つかりません - 同期処理でWindowManager実行");
+          println!("CONSOLE: 同期処理でWindowManager実行");
+          
+          // WindowManagerを同期で実行（非同期部分はblock_onで処理）
+          let window_manager = WindowManager::new(app_handle_clone.clone());
+          
+          // 新しいランタイムを作成して実行
+          if let Ok(rt) = tokio::runtime::Runtime::new() {
+            rt.block_on(async {
+              if let Err(e) = window_manager.handle_hotkey_display().await {
+                println!("CONSOLE: WindowManager表示エラー: {}", e);
+                log::error!("WindowManager表示エラー: {}", e);
               }
-            }
+            });
           } else {
-            println!("CONSOLE: スモールウィンドウが見つかりません（同期）");
-            log::error!("スモールウィンドウが見つかりません（同期）");
+            println!("CONSOLE: ランタイム作成失敗、フォールバック表示");
+            if let Some(small_window) = app_handle_clone.get_webview_window("small") {
+              let _ = small_window.center();
+              let _ = small_window.show();
+              let _ = small_window.set_focus();
+            }
           }
         }
       }) {
@@ -2435,23 +2442,6 @@ pub fn run() {
           log::info!("グローバルホットキー登録成功: Cmd+Shift+V");
           println!("CONSOLE: グローバルホットキー登録成功: Cmd+Shift+V");
           
-          // テスト: 5秒後にスモールウィンドウを表示してみる
-          let test_handle = app.handle().clone();
-          std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            log::info!("テスト: 5秒後にスモールウィンドウを強制表示");
-            println!("CONSOLE: テスト: 5秒後にスモールウィンドウを強制表示");
-            if let Some(small_window) = test_handle.get_webview_window("small") {
-              let _ = small_window.center();
-              let _ = small_window.show();
-              let _ = small_window.set_focus();
-              log::info!("テスト表示成功");
-              println!("CONSOLE: テスト表示成功");
-            } else {
-              log::error!("テスト: スモールウィンドウが見つかりません");
-              println!("CONSOLE: エラー: スモールウィンドウが見つかりません");
-            }
-          });
         },
         Err(e) => {
           log::error!("グローバルホットキー登録失敗: {}", e);
