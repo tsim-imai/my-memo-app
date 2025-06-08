@@ -26,38 +26,10 @@ impl WindowManager {
         Self { app_handle }
     }
     
-    // フォーカス状態とディスプレイ情報を取得
-    fn get_focus_and_display_info(&self, mouse_x: f64, mouse_y: f64) -> (bool, String) {
-        // メインウィンドウのフォーカス状態を確認
-        let main_window_focused = if let Some(main_window) = self.app_handle.get_webview_window("main") {
-            main_window.is_focused().unwrap_or(false)
-        } else {
-            false
-        };
-        
-        // マウス位置のディスプレイ情報を取得
-        let scale_factor = self.get_display_scale_factor_for_point(mouse_x, mouse_y);
-        let display_info = if scale_factor == 2.0 {
-            "4Kディスプレイ（メイン）".to_string()
-        } else {
-            "フルHDディスプレイ（サブ）".to_string()
-        };
-        
-        let focus_info = if main_window_focused {
-            "メインウィンドウフォーカス中".to_string()
-        } else {
-            "外部アプリフォーカス中".to_string()
-        };
-        
-        println!("CONSOLE: フォーカス状態: {}, ディスプレイ: {}", focus_info, display_info);
-        
-        (main_window_focused, format!("{} on {}", focus_info, display_info))
-    }
     
     // ディスプレイのスケールファクターを取得
     #[cfg(target_os = "macos")]
     fn get_display_scale_factor_for_point(&self, x: f64, y: f64) -> f64 {
-        println!("🔍 DEBUG: macOS: ディスプレイスケールファクター取得 - 座標: ({}, {})", x, y);
         extern "C" {
             fn CGDisplayPixelsWide(display: u32) -> usize;
             fn CGDisplayPixelsHigh(display: u32) -> usize;
@@ -89,10 +61,59 @@ impl WindowManager {
         }
     }
     
+    // マウス位置のウィンドウを強制フォーカス
+    #[cfg(target_os = "macos")]
+    async fn force_focus_window_at_mouse(&self, x: f64, y: f64) -> bool {
+        // AppleScriptを使ってマウス位置のウィンドウをクリックしてフォーカス
+        use std::process::Command;
+        
+        let script = format!(
+            r#"
+            tell application "System Events"
+                set mouseLocation to {{{}, {}}}
+                set frontApp to name of first application process whose frontmost is true
+                
+                -- マウス位置をクリックしてそのウィンドウをフォーカス
+                click at mouseLocation
+                delay 0.1
+                
+                -- 成功判定（フロントアプリが変わったかチェック）
+                set newFrontApp to name of first application process whose frontmost is true
+                if frontApp is not equal to newFrontApp then
+                    return true
+                else
+                    return false
+                end if
+            end tell
+            "#,
+            x as i32, y as i32
+        );
+        
+        match Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output() {
+            Ok(output) => {
+                if output.status.success() {
+                    let result_str = String::from_utf8_lossy(&output.stdout);
+                    result_str.trim() == "true"
+                } else {
+                    false
+                }
+            }
+            Err(_) => false
+        }
+    }
+    
+    // フォールバック: 非macOS環境
+    #[cfg(not(target_os = "macos"))]
+    async fn force_focus_window_at_mouse(&self, _x: f64, _y: f64) -> bool {
+        false
+    }
+    
     // マウス位置を同期的に取得
     #[cfg(target_os = "macos")]
     fn get_mouse_position_sync(&self) -> serde_json::Value {
-        println!("🔍 DEBUG: macOS: マウス位置同期取得開始");
         #[repr(C)]
         struct CGPoint {
             x: f64,
@@ -136,13 +157,19 @@ impl WindowManager {
         let mouse_pos = self.get_mouse_position_sync();
         let raw_x = mouse_pos.get("x").and_then(|v| v.as_i64()).unwrap_or(960) as i32;
         let raw_y = mouse_pos.get("y").and_then(|v| v.as_i64()).unwrap_or(540) as i32;
-        let scale_factor = mouse_pos.get("scale_factor").and_then(|v| v.as_f64()).unwrap_or(1.0);
+        let _scale_factor = mouse_pos.get("scale_factor").and_then(|v| v.as_f64()).unwrap_or(1.0);
         
-        // フォーカス情報を取得
-        let (main_window_focused, display_info) = self.get_focus_and_display_info(raw_x as f64, raw_y as f64);
+        // ディスプレイ情報のみ取得（フォーカスは既に事前確認済み）
+        let scale_factor = self.get_display_scale_factor_for_point(raw_x as f64, raw_y as f64);
+        let display_info = if scale_factor == 2.0 {
+            "4Kディスプレイ（メイン）".to_string()
+        } else {
+            "フルHDディスプレイ（サブ）".to_string()
+        };
+        let display_info = format!("統一座標系 on {}", display_info);
         
-        println!("CONSOLE: マウス位置取得: x={}, y={}, scale={}, {}", 
-                raw_x, raw_y, scale_factor, display_info);
+        println!("📍 マウス座標: ({}, {}) on {}", raw_x, raw_y, 
+                if scale_factor == 2.0 { "4K" } else { "フルHD" });
         
         let mouse_position = MousePosition {
             x: raw_x,
@@ -151,7 +178,7 @@ impl WindowManager {
             display_info,
         };
         
-        (mouse_position, main_window_focused)
+        (mouse_position, true) // フォーカスは事前に統一済み
     }
     
     // ウィンドウ位置を計算
@@ -187,7 +214,7 @@ impl WindowManager {
             (window_x, window_y, log)
         };
         
-        println!("CONSOLE: {}", log);
+        println!("🧮 ウィンドウ位置: ({}, {})", final_x, final_y);
         
         WindowPosition {
             x: final_x,
@@ -199,50 +226,47 @@ impl WindowManager {
     // ウィンドウを表示（安定化処理）
     async fn show_window_at_position(&self, position: &WindowPosition) -> Result<String, String> {
         if let Some(small_window) = self.app_handle.get_webview_window("small") {
-            println!("CONSOLE: ウィンドウ位置設定開始: target=({}, {})", position.x, position.y);
+            // 前回位置の記憶をリセットするため、一度非表示にする
+            let _ = small_window.hide();
             
-            // 位置設定
+            // 位置設定 - Physical座標での二重スケーリング問題を回避するため、Logical座標を試行
             use tauri::Position;
-            let tauri_position = Position::Physical(tauri::PhysicalPosition { 
-                x: position.x, 
-                y: position.y 
-            });
+            
+            // スケールファクターに基づいて座標種類を決定
+            let tauri_position = if position.calculation_log.contains("スケーリング後") {
+                // 4Kディスプレイ: 既にスケーリング済みなのでLogical座標で設定
+                let logical_x = (position.x as f64 / 2.0) as i32;
+                let logical_y = (position.y as f64 / 2.0) as i32;
+                Position::Logical(tauri::LogicalPosition { 
+                    x: logical_x as f64, 
+                    y: logical_y as f64 
+                })
+            } else {
+                // フルHDディスプレイ: Physical座標のまま
+                Position::Physical(tauri::PhysicalPosition { 
+                    x: position.x, 
+                    y: position.y 
+                })
+            };
             
             match small_window.set_position(tauri_position) {
                 Ok(_) => {
-                    println!("CONSOLE: 位置設定成功");
-                    
-                    // 位置設定後の確認（参考情報として）
-                    if let Ok(actual_pos) = small_window.inner_position() {
-                        println!("CONSOLE: 設定後の実際位置: ({}, {}) [期待値: ({}, {})]", 
-                                actual_pos.x, actual_pos.y, position.x, position.y);
-                    }
-                    
                     // ウィンドウ表示
                     match small_window.show() {
                         Ok(_) => {
                             let _ = small_window.set_focus();
                             
-                            // 表示後の最終位置確認
+                            // 表示後の最終位置確認（問題2のデバッグ用）
                             if let Ok(final_pos) = small_window.inner_position() {
-                                println!("CONSOLE: 表示後の最終位置: {:?}", final_pos);
+                                println!("🪟 最終位置: {:?}", final_pos);
                             }
                             
-                            // スモールウィンドウにフォーカス設定（フォーカス問題対策）
-                            println!("CONSOLE: スモールウィンドウにフォーカス設定");
-                            
-                            Ok(format!("ウィンドウ表示成功: {}", position.calculation_log))
+                            Ok("ウィンドウ表示成功".to_string())
                         }
-                        Err(e) => {
-                            println!("CONSOLE: ウィンドウ表示失敗: {}", e);
-                            Err(format!("ウィンドウ表示失敗: {}", e))
-                        }
+                        Err(e) => Err(format!("ウィンドウ表示失敗: {}", e))
                     }
                 }
-                Err(e) => {
-                    println!("CONSOLE: 位置設定失敗: {}", e);
-                    Err(format!("位置設定失敗: {}", e))
-                }
+                Err(e) => Err(format!("位置設定失敗: {}", e))
             }
         } else {
             Err("スモールウィンドウが見つかりません".to_string())
@@ -258,51 +282,48 @@ impl WindowManager {
             HOTKEY_COUNTER
         };
         
-        println!("CONSOLE: ========================================");
-        println!("CONSOLE: 🔥 ホットキー処理開始 ({}回目)", current_count);
-        println!("CONSOLE: ========================================");
+        println!("🔥 ホットキー処理開始 ({}回目)", current_count);
+        let main_window_focused = if let Some(main_window) = self.app_handle.get_webview_window("main") {
+            main_window.is_focused().unwrap_or(false)
+        } else {
+            false
+        };
         
-        // 1. マウス位置とフォーカス情報を取得
-        println!("CONSOLE: 📍 ステップ1: マウス位置とフォーカス情報取得");
-        let (mouse_pos, main_window_focused) = self.get_current_mouse_position();
-        
-        // フォーカス問題対策: メインウィンドウが非フォーカスの場合は座標系を安定化
+        // 新しいアプローチ: マウス位置のウィンドウを強制フォーカス
         if !main_window_focused {
-            println!("CONSOLE: ⚠️ フォーカス問題検出: メインウィンドウが非フォーカス状態");
+            println!("🎯 マウス位置のウィンドウを強制フォーカス中...");
             
-            // メインウィンドウにフォーカスして座標系を統一
-            if let Some(main_window) = self.app_handle.get_webview_window("main") {
-                println!("CONSOLE: 🎯 メインウィンドウにフォーカス設定中...");
-                let _ = main_window.set_focus();
-                
-                // フォーカスが完全に設定されるまで待機
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                println!("CONSOLE: ✅ フォーカス設定完了");
+            // マウス座標を先に取得
+            let temp_mouse_pos = self.get_mouse_position_sync();
+            let mouse_x = temp_mouse_pos.get("x").and_then(|v| v.as_f64()).unwrap_or(960.0);
+            let mouse_y = temp_mouse_pos.get("y").and_then(|v| v.as_f64()).unwrap_or(540.0);
+            
+            // マウス位置のウィンドウを強制フォーカス
+            if self.force_focus_window_at_mouse(mouse_x, mouse_y).await {
+                println!("✅ マウス位置ウィンドウのフォーカス成功");
+                // 座標系が安定するまで短時間待機
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            } else {
+                println!("⚠️ フォーカス失敗 - 従来方式で継続");
+                // フォールバック: 従来のメインウィンドウフォーカス
+                if let Some(main_window) = self.app_handle.get_webview_window("main") {
+                    let _ = main_window.set_focus();
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
             }
         } else {
-            println!("CONSOLE: ✅ フォーカス状態正常: メインウィンドウがフォーカス中");
+            println!("✅ 既にフォーカス中 - 即座に処理");
         }
         
-        // 2. ウィンドウ位置計算
-        println!("CONSOLE: 🧮 ステップ2: ウィンドウ位置計算");
+        // 統一された座標系でマウス位置を取得し、ウィンドウを表示
+        let (mouse_pos, _) = self.get_current_mouse_position();
         let window_pos = self.calculate_window_position(&mouse_pos);
-        
-        // 3. ウィンドウ表示
-        println!("CONSOLE: 🪟 ステップ3: ウィンドウ表示");
         let result = self.show_window_at_position(&window_pos).await;
         
         // 処理完了ログ
         match &result {
-            Ok(_) => {
-                println!("CONSOLE: ========================================");
-                println!("CONSOLE: ✅ ホットキー処理完了 ({}回目) - 成功", current_count);
-                println!("CONSOLE: ========================================");
-            }
-            Err(e) => {
-                println!("CONSOLE: ========================================");
-                println!("CONSOLE: ❌ ホットキー処理完了 ({}回目) - 失敗: {}", current_count, e);
-                println!("CONSOLE: ========================================");
-            }
+            Ok(_) => println!("✅ ウィンドウ表示完了 ({}回目)", current_count),
+            Err(e) => println!("❌ ウィンドウ表示失敗 ({}回目): {}", current_count, e),
         }
         
         result

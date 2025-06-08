@@ -190,11 +190,8 @@ async fn init_clipboard_manager(
 // ウィンドウ操作用のカスタムコマンド
 #[tauri::command]
 async fn show_small_window_at_mouse(app_handle: AppHandle) -> Result<String, String> {
-    println!("🔍 DEBUG: show_small_window_at_mouse: 開始");
     let window_manager = WindowManager::new(app_handle);
-    let result = window_manager.handle_hotkey_display().await;
-    println!("🔍 DEBUG: show_small_window_at_mouse: 結果 = {:?}", result);
-    result
+    window_manager.handle_hotkey_display().await
 }
 
 #[tauri::command]
@@ -344,57 +341,26 @@ pub fn run() {
       log::info!("グローバルホットキー登録試行: Cmd+Shift+V");
       
       match app.global_shortcut().on_shortcut(shortcut, move |_app_handle, _shortcut, event| {
-        println!("🔥 HOTKEY: グローバルホットキーが押されました: Cmd+Shift+V, イベント: {:?}", event);
-        
         // イベントをStringに変換して判定（プレス時のみ反応）
         let event_str = format!("{:?}", event);
         if event_str.contains("Released") {
-          println!("🔥 HOTKEY: Released イベントをスキップ");
           return; // キーを離した時は何もしない
         }
-        
-        println!("🔥 HOTKEY: Pressed イベント - 処理開始");
         
         // マウス位置にスモールウィンドウを表示
         let app_handle_clone = app_handle.clone();
         // ランタイムをチェックして処理を分岐
-        println!("🔥 HOTKEY: tokioランタイムを確認中...");
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-          println!("🔥 HOTKEY: tokioランタイム発見 - 非同期処理に進む");
           runtime.spawn(async move {
-            println!("🔥 HOTKEY: ホットキー処理開始: 非同期処理");
-            
-            // まずマウス位置での表示を試行
-            match show_small_window_at_mouse(app_handle_clone.clone()).await {
-              Ok(msg) => {
-                log::info!("マウス位置でのスモールウィンドウ表示成功: {}", msg);
-              },
-              Err(e) => {
-                log::error!("マウス位置での表示失敗: {}", e);
-                // フォールバック: 通常の表示方法
-                if let Some(small_window) = app_handle_clone.get_webview_window("small") {
-                  if let Ok(_) = small_window.show() {
-                    log::info!("フォールバック表示成功（center）");
-                  } else {
-                    log::error!("スモールウィンドウが見つかりません");
-                  }
-                }
-              }
-            }
+            let _ = show_small_window_at_mouse(app_handle_clone).await;
           });
         } else {
-          println!("🔥 HOTKEY: tokioランタイムが見つかりません - 同期処理でWindowManager実行");
-          
           // 同期処理ではWindowManagerを直接使えないので、非同期ランタイムを作成
           let app_handle_sync = app_handle.clone();
           std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-              println!("🔥 HOTKEY: 新しいランタイムで WindowManager 実行");
-              match show_small_window_at_mouse(app_handle_sync).await {
-                Ok(msg) => println!("🔥 HOTKEY: WindowManager成功: {}", msg),
-                Err(e) => println!("🔥 HOTKEY: WindowManagerエラー: {}", e),
-              }
+              let _ = show_small_window_at_mouse(app_handle_sync).await;
             });
           });
         }
